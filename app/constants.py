@@ -1,4 +1,12 @@
 """Shared domain defaults; keep action types aligned with schema.sql."""
 
-ALLOWED_ACTION_TYPES = ("lab", "referral", "recheck")
+from typing import Literal, get_args
+
+ActionType = Literal["lab", "referral", "recheck"]
+FollowUpStatus = Literal["open", "done"]
+FollowUpFlag = Literal["overdue", "due_soon", "unassigned"]
+
+ALLOWED_ACTION_TYPES = get_args(ActionType)
+FOLLOWUP_STATUSES = get_args(FollowUpStatus)
+FOLLOWUP_FLAGS = get_args(FollowUpFlag)
 DUE_SOON_DAYS = 7

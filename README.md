@@ -4,10 +4,12 @@ A lightweight clinic operations tool for tracking patient visit follow-ups, iden
 
 > **Project status:** Proposed technical design for the Week 3 team project. This README documents the intended architecture and interfaces; it does **not** imply that every feature has been implemented. **Synthetic data only**—never load real patient records.
 
-**Scaffold available:** the repository now includes a runnable placeholder home
+**Implemented:** the repository includes a runnable placeholder home
 page, `/health`, the proposed core SQL schema, sample data, domain constants, development
 configuration, Docker Compose, a database initialization script, and tests.
-Ingestion, follow-up rules, business APIs, and AI queries are not implemented yet.
+The backend exposes the live schema as text and executes read-only SQL across
+application tables. Data ingestion, reports, history, updates, the search UI, and
+natural-language interpretation remain planned.
 Run `python scripts/table_generate.py` to initialize the core schema explicitly;
 the web app does not apply it automatically.
 
@@ -45,7 +47,7 @@ Assignments for the new web/LLM work are **proposed** and should be agreed on by
 | Rule execution | Deterministic Python classes, **not** the LLM | Predictable results and easy unit testing |
 | Current date | Inject `as_of_date` into rule evaluation | Repeatable tests; normally defaults to today's date |
 | Rule defaults | Constants in `app/constants.py` | Keeps the small set of domain defaults in application code |
-| LLM role | **Read-only** natural language → validated structured filters | Avoid arbitrary SQL and AI-driven record modifications |
+| LLM role | **Read-only** natural language → SQL using the published schema (planned) | A shared query API enforces read-only access and execution limits |
 | Write operations | Explicit staff action through backend service | No automatic care decisions or follow-up changes |
 | Deployment | Docker, with SQLite on a named volume | Data persists across container replacement |
 | Release strategy | Tagged 1.0.0 and 1.1.0 images + Git tags | Reproducible upgrade and rollback |
@@ -249,42 +251,120 @@ The rule engine is implemented with a base `FollowUpRule` class and one subclass
 
 **Planned 1.1.0 rule:** `due_before_visit`—flag an open follow-up whose due date is earlier than its source visit date. This is a business-rule warning, not a malformed-date parsing error. The team should confirm this specific choice before implementation.
 
-## 7. Backend and natural-language queries
+## 7. Backend queries
 
-The web application calls backend services; the same service functions handle follow-up searches, reports, history, and explicit status changes.
+The backend accepts SQL and returns query results for all application tables.
+The frontend or a future AI layer builds the query; the backend does not interpret
+natural language or maintain separate search endpoints for each table.
 
-**Proposed API contracts** (not implemented endpoints yet):
+| Method | Route | Function | Status |
+|---|---|---|---|
+| `GET` | `/api/schema` | Current database schema as plain text | Implemented |
+| `POST` | `/api/query` | Execute one read-only SQL query | Implemented |
+| `POST` | `/api/ask` | Natural-language interpretation | Planned |
+| `POST` | `/api/import` | Import validated synthetic data | Planned |
 
-| Method | Route | Function |
-|---|---|---|
-| `GET` | `/api/followups` | Filter by status, flag, action, staff, or date |
-| `GET` | `/api/reports/summary` | Counts grouped by overdue/due-soon/unassigned |
-| `GET` | `/api/patients/{patient_id}/history` | Visits and linked follow-ups, grouped by episode |
-| `POST` | `/api/followups/{followup_id}/complete` | Explicitly mark an action done |
-| `POST` | `/api/ask` | Read-only natural-language query |
-| `POST` | `/api/import` | Import validated synthetic data (restricted/admin demo action) |
+Interactive API documentation is available at `http://localhost:8000/docs`.
 
-**LLM flow:**
+### Retrieve the schema
 
-1. User asks: “Show overdue lab follow-ups assigned to Dr. Example.”
-2. Model returns a **structured intent**, not SQL:
+```bash
+curl http://localhost:8000/api/schema
+```
 
-   ```json
-   {
-     "intent": "list_followups",
-     "filters": {
-       "flag": "overdue",
-       "action_type": "lab",
-       "assigned_staff_name": "Dr. Example"
-     }
-   }
-   ```
+The response is `text/plain` containing the current `CREATE TABLE` and
+`CREATE INDEX` statements, including column types, keys, and relationships.
+It is read from the database, not a static copy of `schema.sql`, and contains
+no patient records. It covers `patients`, `staff`, `episodes`, `visits`, and
+`followups`, plus `status_changes` if that optional table is implemented.
 
-3. Backend validates the intent, allowed fields, and values with Pydantic.
-4. Backend resolves the staff name to an ID, executes a **predefined, parameterized** database query, and calculates flags deterministically.
-5. UI presents actual result rows/counts. When a question is unsupported or ambiguous, the assistant asks for clarification or says it cannot answer from the data.
+### Execute a query
 
-**LLM guardrails:** no arbitrary SQL execution, no unrestricted database tools, no write operations via chat, no invented patient facts, no silent changes to follow-up statuses, and no real medical data sent to model providers. Standard UI filters and reports work **without** an LLM/API key.
+```bash
+curl -X POST http://localhost:8000/api/query \
+  -H 'Content-Type: application/json' \
+  -d '{"query":"SELECT patient_id, name FROM patients WHERE name LIKE ? ORDER BY patient_id","parameters":["%Sample%"]}'
+```
+
+Request body:
+
+```json
+{
+  "query": "SELECT patient_id, name FROM patients WHERE name LIKE ? ORDER BY patient_id",
+  "parameters": ["%Sample%"],
+  "max_rows": 100
+}
+```
+
+Only `query` is required. `parameters` defaults to an empty list; use a list with
+`?` placeholders, or an object with named placeholders such as `:patient_id`.
+Bind user-entered values instead of concatenating them into SQL. `max_rows`
+defaults to 100 and must be between 1 and 1,000.
+
+Example response (illustrative; sample data is not imported automatically):
+
+```json
+{
+  "columns": ["patient_id", "name"],
+  "rows": [["P001", "Sample Patient"]],
+  "row_count": 1,
+  "truncated": false
+}
+```
+
+Row values follow the order of `columns`. This preserves both values even if a
+join returns duplicate column names; use SQL aliases for clearer headings.
+`row_count` counts returned rows, not all possible matches. Empty results retain
+column names and return `rows: []`. `truncated` is true if additional rows were
+omitted because of the row or response-size cap.
+
+Filters, joins, aggregation, sorting, and pagination are expressed in SQL. For
+example, a follow-up query can select patient and staff names across tables:
+
+```sql
+SELECT f.followup_id, p.name AS patient_name, s.name AS assigned_staff_name,
+       f.action_type, f.due_date, f.status
+FROM followups f
+JOIN visits v ON v.visit_id = f.visit_id
+JOIN patients p ON p.patient_id = v.patient_id
+LEFT JOIN staff s ON s.staff_id = f.assigned_staff_id
+WHERE f.status = :status AND f.due_date < :as_of_date
+ORDER BY f.due_date, f.followup_id
+LIMIT :limit OFFSET :offset
+```
+
+Supply parameters such as `{"status":"open","as_of_date":"2026-10-26","limit":25,"offset":0}`.
+The query endpoint returns the selected columns unchanged; it does not add flags
+or rewrite business conditions. Domain rule classes remain available separately
+for future reports and workflow features.
+
+### Execution limits and errors
+
+Connections open the database read-only. SQLite authorization allows reads of
+application tables and approved SQL functions, including common aggregates,
+string/date functions, and window functions. Writes, schema changes, transactions,
+`ATTACH`, `PRAGMA`, extension loading, internal/unlisted tables, and multiple
+statements are rejected. The implementation uses SQLite's
+[authorization callback](https://www.sqlite.org/c3ref/set_authorizer.html).
+The full function/table allowlists are in `app/repository.py`.
+
+Queries have a cooperative two-second / one-million-VM-step execution budget,
+a 20,000-byte SQL limit, at most 100 result columns, a 1 MB per-value/row limit,
+and a 4 MiB response-row budget. Results must be JSON-compatible text, finite
+numbers, or NULL; use `HEX()` to return binary data as text.
+
+| HTTP status | Meaning |
+|---|---|
+| 200 | Query completed, including empty results |
+| 422 | Invalid SQL/parameters, disallowed operation, or unsupported result type |
+| 408 | Query exceeded its execution budget |
+| 503 | Database unavailable; check `FOLLOWUP_DB_PATH` and initialize the schema |
+
+Query execution errors use `detail.code` and `detail.message`; invalid request
+bodies use FastAPI's standard validation-error list. No LLM API key is needed.
+The future AI flow is: fetch schema → produce SQL and bound parameters → call
+`/api/query` → display actual results. Natural-language interpretation and model
+provider calls are not implemented.
 
 ## 8. Repository layout
 
@@ -297,11 +377,12 @@ visit-follow-up-tracker/
 ├── app/
 │   ├── __init__.py
 │   ├── main.py                 # FastAPI app / route registration
+│   ├── api.py                  # Schema-text and SQL query endpoints
 │   ├── models.py               # Pydantic input/output models
 │   ├── constants.py            # Allowed actions and due-soon window
-│   ├── db.py                   # Connection factory; PRAGMA foreign_keys=ON
+│   ├── db.py                   # Read-only connections; PRAGMA foreign_keys=ON
 │   ├── schema.sql              # SQLite schema
-│   ├── repository.py           # Parameterized SQL operations
+│   ├── repository.py           # Restricted read-only SQL execution
 │   ├── service.py              # Validated business operations
 │   ├── rules/                  # FollowUpRule + subclasses
 │   ├── ingestion/              # Loader, validation, synthetic-data helpers
@@ -313,7 +394,7 @@ visit-follow-up-tracker/
 │   └── README.md              # Available and planned operational utilities
 ├── tests/
 │   ├── unit/                  # Schema initialization tests
-│   └── integration/           # Startup smoke test; full-path test still planned
+│   └── integration/           # Startup and search API tests against temporary SQLite
 ├── presentation/              # Reserved for the team presentation
 ├── .github/workflows/ci.yml
 ├── Dockerfile
@@ -322,7 +403,8 @@ visit-follow-up-tracker/
 ├── .gitignore
 ├── .env.example
 ├── .editorconfig
-├── pyproject.toml             # Pytest configuration
+├── pyproject.toml             # Project dependencies, uv, and pytest configuration
+├── uv.lock                    # Locked dependencies for uv installations
 ├── requirements.txt
 ├── requirements-dev.txt
 ├── CHANGELOG.md
@@ -334,19 +416,24 @@ visit-follow-up-tracker/
 Run the application scaffold from the repository root with Python 3.11+:
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install -r requirements-dev.txt
+uv sync --locked
 cp .env.example .env
-python scripts/table_generate.py
-uvicorn app.main:app --reload --env-file .env
+uv run python scripts/table_generate.py
+uv run uvicorn app.main:app --reload --env-file .env
 ```
 
 Open `http://localhost:8000` for the placeholder home page, `/health` for process
 health, or `/docs` for the currently registered routes. Environment files are
 loaded only when explicitly requested with `--env-file`; exported environment
-variables can also be used directly. Dependencies have compatibility ranges and
-are not yet locked for a release.
+variables can also be used directly. `uv sync --locked` creates `.venv` and installs
+runtime and development dependencies from `uv.lock`. Commit `pyproject.toml` and
+`uv.lock` together when changing dependencies; `.venv` remains ignored. The
+requirements files are retained for the existing pip-based Docker/CI setup and
+must be kept consistent with the dependency ranges in `pyproject.toml`.
+
+Once the server is running, try schema discovery and SQL queries in section 7 or use
+`/docs`. A newly initialized database returns empty results until synthetic
+records are inserted; this change does not implement the data importer.
 
 `table_generate.py` uses only the Python standard library. It creates the five
 core tables and four query indexes in `data/followups.db`, preserving existing
@@ -378,13 +465,16 @@ Do not commit `.env`, the working SQLite database, backups, or any credentials.
 From the repository root, with the local virtual environment activated:
 
 ```bash
+uv run pytest -q
 python -m pip install -r requirements-dev.txt
 python -m pytest -q
 ```
 
-Current tests check application startup, `/health`, home-page rendering, schema
-creation, repeat initialization, database path selection, and schema rollback.
-The business tests described below remain planned.
+Current tests check startup, schema initialization/discovery, queries across all
+application tables, joins, aggregates, bound parameters, SQL pagination, response
+limits, rejected writes, and execution budgets. They use temporary synthetic
+databases and make no external LLM calls. The full import/report/update/history
+workflow below remains planned.
 
 **Unit tests:** valid/invalid input, unknown action type, invalid date, overdue boundary, due-today behavior, due-soon window, unassigned and multi-flag cases, no-flags report, database foreign keys, and updates.
 
@@ -549,7 +639,7 @@ docker run -d --name followup-app -p 8000:8000 \
 - [ ] Relationships are enforced, including episode/patient consistency and enabled foreign keys.
 - [ ] Overdue, due-soon, and unassigned flags work with deterministic tests.
 - [ ] Clinic manager can view reports, search history, and explicitly complete follow-ups.
-- [ ] Read-only LLM queries (if included) use only approved structured filters.
+- [ ] Read-only LLM queries (if included) pass database authorization and execution limits.
 - [ ] Every required unit test and full-path integration test passes in CI.
 - [ ] SQLite persists across container replacement.
 - [ ] Versioned 1.0.0 → 1.1.0 → 1.0.0 demo preserves existing records.
