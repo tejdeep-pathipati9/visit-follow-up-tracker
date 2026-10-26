@@ -16,6 +16,7 @@ RUN groupadd --system tracker \
 
 COPY app/ ./app/
 COPY data/sample_visits.json ./data/sample_visits.json
+COPY scripts/table_generate.py ./scripts/table_generate.py
 
 USER tracker
 EXPOSE 8000
