@@ -4,6 +4,12 @@ A lightweight clinic operations tool for tracking patient visit follow-ups, iden
 
 > **Project status:** Proposed technical design for the Week 3 team project. This README documents the intended architecture and interfaces; it does **not** imply that every feature has been implemented. **Synthetic data only**—never load real patient records.
 
+**Scaffold available:** the repository now includes a runnable placeholder home
+page, `/health`, the proposed core SQL schema, sample data, domain constants, development
+configuration, Docker Compose, and a CI startup smoke test. Ingestion, database
+initialization, follow-up rules, business APIs, and AI queries are not implemented
+yet. The SQL schema is not applied automatically.
+
 ## 1. Problem and scope
 
 After a patient visit, clinic staff may request a lab test, referral, or recheck. Those actions can be missed when they are stored only in visit notes. Our tool will let a clinic manager see which follow-ups are **overdue**, **due soon**, or **unassigned**, review the patient's visit history, and explicitly mark actions complete.
@@ -16,7 +22,7 @@ After a patient visit, clinic staff may request a lab test, referral, or recheck
 
 | Owner | Area | Deliverables |
 |---|---|---|
-| Sanket | Intake and rules | Synthetic data generator, JSON/settings validation, `FollowUp` model, rule classes, unit tests |
+| Sanket | Intake and rules | Synthetic data generator, JSON validation, `FollowUp` model, rule classes, unit tests |
 | Jihyung | Data and application services | SQLite schema, transactions, queries, reports, follow-up updates, backend endpoints, unit tests |
 | Tejdeep | Delivery and integration | Docker/volume, CI, integration test, Git tags, releases 1.0.0 and 1.1.0, database backup/rollback, README, task board |
 | Shared | Web and AI workflow | Minimal manager interface, safe natural-language query flow, joint demo |
@@ -37,7 +43,7 @@ Assignments for the new web/LLM work are **proposed** and should be agreed on by
 | Date storage | ISO 8601 text (`YYYY-MM-DD`); UTC timestamps for events | Sortable strings in SQLite; dates validated in Python |
 | Rule execution | Deterministic Python classes, **not** the LLM | Predictable results and easy unit testing |
 | Current date | Inject `as_of_date` into rule evaluation | Repeatable tests; normally defaults to today's date |
-| Settings | Version-controlled `config/settings.json` | Allows changing the due-soon window without code edits |
+| Rule defaults | Constants in `app/constants.py` | Keeps the small set of domain defaults in application code |
 | LLM role | **Read-only** natural language → validated structured filters | Avoid arbitrary SQL and AI-driven record modifications |
 | Write operations | Explicit staff action through backend service | No automatic care decisions or follow-up changes |
 | Deployment | Docker, with SQLite on a named volume | Data persists across container replacement |
@@ -217,16 +223,16 @@ The importer reads one JSON file containing synthetic patients, staff, episodes,
 
 **Import behavior:** validate records first, summarize rejections, then insert the accepted batch in **one SQLite transaction**. If a database write fails, roll back that batch (no partial saved batch). Import parents before children: patients/staff → episodes → visits → follow-ups. A repeat import must not silently create duplicates.
 
-`config/settings.json`:
+Rule defaults in `app/constants.py`:
 
-```json
-{
-  "allowed_action_types": ["lab", "referral", "recheck"],
-  "due_soon_days": 7
-}
+```python
+ALLOWED_ACTION_TYPES = ("lab", "referral", "recheck")
+DUE_SOON_DAYS = 7
 ```
 
-Settings loading must provide clear errors for missing files, malformed JSON, or invalid values. The configured action types must stay consistent with the database's `CHECK` constraint (or the schema must be updated in a controlled migration).
+The rule engine will use these constants directly; no separate settings file is
+needed. Allowed action types must stay consistent with the database's `CHECK`
+constraint (or the schema must be updated in a controlled migration).
 
 ## 6. Follow-up rules
 
@@ -279,13 +285,19 @@ The web application calls backend services; the same service functions handle fo
 
 **LLM guardrails:** no arbitrary SQL execution, no unrestricted database tools, no write operations via chat, no invented patient facts, no silent changes to follow-up statuses, and no real medical data sent to model providers. Standard UI filters and reports work **without** an LLM/API key.
 
-## 8. Proposed repository layout
+## 8. Repository layout
+
+The structure below is scaffolded. Modules containing only a TODO docstring are
+implementation locations, not completed features. Operational scripts are listed
+in `scripts/README.md` and have not been implemented yet.
 
 ```text
-visit-followup-tracker/
+visit-follow-up-tracker/
 ├── app/
+│   ├── __init__.py
 │   ├── main.py                 # FastAPI app / route registration
 │   ├── models.py               # Pydantic input/output models
+│   ├── constants.py            # Allowed actions and due-soon window
 │   ├── db.py                   # Connection factory; PRAGMA foreign_keys=ON
 │   ├── schema.sql              # SQLite schema
 │   ├── repository.py           # Parameterized SQL operations
@@ -294,45 +306,58 @@ visit-followup-tracker/
 │   ├── ingestion/              # Loader, validation, synthetic-data helpers
 │   ├── ai/                     # Read-only query interpretation
 │   └── templates/              # Minimal web templates (no design spec here)
-├── config/settings.json
 ├── data/sample_visits.json     # Synthetic data only
-├── scripts/                   # Generate, import, backup, verify, restore
-├── tests/                     # Unit and full-path integration tests
-├── presentation/              # Single team presentation page
+├── scripts/README.md          # Planned generate/import/backup/restore utilities
+├── tests/
+│   ├── unit/                  # Reserved for unit tests
+│   └── integration/           # Startup smoke test; full-path test still planned
+├── presentation/              # Reserved for the team presentation
 ├── .github/workflows/ci.yml
 ├── Dockerfile
+├── compose.yaml               # Local app + named SQLite data volume
 ├── .dockerignore
 ├── .gitignore
+├── .env.example
+├── .editorconfig
+├── pyproject.toml             # Pytest configuration
 ├── requirements.txt
+├── requirements-dev.txt
 ├── CHANGELOG.md
 └── README.md
 ```
 
-## 9. Local development (planned commands)
+## 9. Local development
 
-> These commands describe the proposed layout. Confirm the file names and scripts after implementation; they are **not** a claim of tested execution.
+Run the application scaffold from the repository root with Python 3.11+:
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-python -m pip install -r requirements.txt
-
-# Generate/load synthetic records using the team's scripts.
-python scripts/generate_synthetic_data.py
-python scripts/import_data.py --file data/sample_visits.json
-
-export FOLLOWUP_DB_PATH=./data/followups.db
-uvicorn app.main:app --reload
+python -m pip install -r requirements-dev.txt
+cp .env.example .env
+uvicorn app.main:app --reload --env-file .env
 ```
 
-Open `http://localhost:8000`. The import script is an operational utility; **the intended clinic-manager interface is the web application, not a CLI.**
+Open `http://localhost:8000` for the placeholder home page, `/health` for process
+health, or `/docs` for the currently registered routes. Environment files are
+loaded only when explicitly requested with `--env-file`; exported environment
+variables can also be used directly. Dependencies have compatibility ranges and
+are not yet locked for a release.
+
+The following commands remain **planned** until the operational scripts exist:
+
+```bash
+python scripts/generate_synthetic_data.py
+python scripts/import_data.py --file data/sample_visits.json
+```
+
+The import script is an operational utility; **the intended clinic-manager interface is the web application, not a CLI.**
 
 Environment variables:
 
 | Name | Example | Purpose |
 |---|---|---|
 | `FOLLOWUP_DB_PATH` | `./data/followups.db` | SQLite database path |
-| `FOLLOWUP_SETTINGS_PATH` | `config/settings.json` | Rule configuration |
 | `LLM_API_KEY` | *(unset by default)* | Optional model API credential; never commit |
 
 Do not commit `.env`, the working SQLite database, backups, or any credentials.
@@ -343,7 +368,10 @@ Do not commit `.env`, the working SQLite database, backups, or any credentials.
 pytest -q
 ```
 
-**Unit tests:** valid/invalid input, missing/bad settings, unknown action type, invalid date, overdue boundary, due-today behavior, due-soon window, unassigned and multi-flag cases, no-flags report, database foreign keys, and updates.
+The scaffold currently checks application startup, `/health`, and home-page
+template rendering only. The business tests described below remain planned.
+
+**Unit tests:** valid/invalid input, unknown action type, invalid date, overdue boundary, due-today behavior, due-soon window, unassigned and multi-flag cases, no-flags report, database foreign keys, and updates.
 
 **Database tests:** use a temporary SQLite database; verify failed batch writes roll back, and (if auditing is enabled) verify the status update and history insert succeed or fail together.
 
@@ -354,6 +382,11 @@ pytest -q
 ## 11. Docker and data persistence
 
 Docker must mount the database on a **named volume** so deleting or replacing the container does not delete visit/follow-up records.
+
+Run the current scaffold with `docker compose up --build`. Compose mounts the
+named `followup_data` volume at `/data`; database creation and writes remain
+unimplemented. `docker compose down` keeps the volume. Adding `--volumes` deletes
+it. Versioned release commands below are for future completed releases.
 
 ```bash
 # Build the versioned image after implementing the Dockerfile.
