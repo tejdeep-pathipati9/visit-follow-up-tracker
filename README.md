@@ -6,9 +6,10 @@ A lightweight clinic operations tool for tracking patient visit follow-ups, iden
 
 **Scaffold available:** the repository now includes a runnable placeholder home
 page, `/health`, the proposed core SQL schema, sample data, domain constants, development
-configuration, Docker Compose, and a CI startup smoke test. Ingestion, database
-initialization, follow-up rules, business APIs, and AI queries are not implemented
-yet. The SQL schema is not applied automatically.
+configuration, Docker Compose, a database initialization script, and tests.
+Ingestion, follow-up rules, business APIs, and AI queries are not implemented yet.
+Run `python scripts/table_generate.py` to initialize the core schema explicitly;
+the web app does not apply it automatically.
 
 ## 1. Problem and scope
 
@@ -288,8 +289,8 @@ The web application calls backend services; the same service functions handle fo
 ## 8. Repository layout
 
 The structure below is scaffolded. Modules containing only a TODO docstring are
-implementation locations, not completed features. Operational scripts are listed
-in `scripts/README.md` and have not been implemented yet.
+implementation locations, not completed features. Operational scripts and their
+implementation status are listed in `scripts/README.md`.
 
 ```text
 visit-follow-up-tracker/
@@ -307,9 +308,11 @@ visit-follow-up-tracker/
 │   ├── ai/                     # Read-only query interpretation
 │   └── templates/              # Minimal web templates (no design spec here)
 ├── data/sample_visits.json     # Synthetic data only
-├── scripts/README.md          # Planned generate/import/backup/restore utilities
+├── scripts/
+│   ├── table_generate.py      # Initialize core SQLite tables and indexes
+│   └── README.md              # Available and planned operational utilities
 ├── tests/
-│   ├── unit/                  # Reserved for unit tests
+│   ├── unit/                  # Schema initialization tests
 │   └── integration/           # Startup smoke test; full-path test still planned
 ├── presentation/              # Reserved for the team presentation
 ├── .github/workflows/ci.yml
@@ -335,6 +338,7 @@ python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install -r requirements-dev.txt
 cp .env.example .env
+python scripts/table_generate.py
 uvicorn app.main:app --reload --env-file .env
 ```
 
@@ -343,6 +347,13 @@ health, or `/docs` for the currently registered routes. Environment files are
 loaded only when explicitly requested with `--env-file`; exported environment
 variables can also be used directly. Dependencies have compatibility ranges and
 are not yet locked for a release.
+
+`table_generate.py` uses only the Python standard library. It creates the five
+core tables and four query indexes in `data/followups.db`, preserving existing
+records on reruns. Override the path with `--db-path /path/to/followups.db` or an
+exported `FOLLOWUP_DB_PATH` (the script does not load `.env`). Schema creation is
+atomic; it does not migrate existing tables or create the optional status history
+table. Foreign keys must still be enabled for every future database connection.
 
 The following commands remain **planned** until the operational scripts exist:
 
@@ -368,8 +379,9 @@ Do not commit `.env`, the working SQLite database, backups, or any credentials.
 pytest -q
 ```
 
-The scaffold currently checks application startup, `/health`, and home-page
-template rendering only. The business tests described below remain planned.
+Current tests check application startup, `/health`, home-page rendering, schema
+creation, repeat initialization, database path selection, and schema rollback.
+The business tests described below remain planned.
 
 **Unit tests:** valid/invalid input, unknown action type, invalid date, overdue boundary, due-today behavior, due-soon window, unassigned and multi-flag cases, no-flags report, database foreign keys, and updates.
 
@@ -384,8 +396,8 @@ template rendering only. The business tests described below remain planned.
 Docker must mount the database on a **named volume** so deleting or replacing the container does not delete visit/follow-up records.
 
 Run the current scaffold with `docker compose up --build`. Compose mounts the
-named `followup_data` volume at `/data`; database creation and writes remain
-unimplemented. `docker compose down` keeps the volume. Adding `--volumes` deletes
+named `followup_data` volume at `/data`; the web app does not initialize or write
+to the database yet. `docker compose down` keeps the volume. Adding `--volumes` deletes
 it. Versioned release commands below are for future completed releases.
 
 ```bash

@@ -1,5 +1,13 @@
 # Operational scripts
 
+Available:
+
+- `python scripts/table_generate.py`: create the five core tables and four
+  query indexes from `app/schema.sql`. Existing records are preserved on reruns.
+  Use `--db-path /path/to/followups.db` or export `FOLLOWUP_DB_PATH` to choose a
+  database; otherwise it uses the project's `data/followups.db`. This script uses
+  only the Python standard library and does not load `.env` automatically.
+
 Planned utilities (not implemented):
 
 - `generate_synthetic_data.py`: write synthetic demo records to `data/generated/`.
