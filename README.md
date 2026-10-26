@@ -375,8 +375,11 @@ Do not commit `.env`, the working SQLite database, backups, or any credentials.
 
 ## 10. Testing and CI
 
+From the repository root, with the local virtual environment activated:
+
 ```bash
-pytest -q
+python -m pip install -r requirements-dev.txt
+python -m pytest -q
 ```
 
 Current tests check application startup, `/health`, home-page rendering, schema
@@ -389,29 +392,109 @@ The business tests described below remain planned.
 
 **Integration test:** load the synthetic file → reject invalid rows with reasons → save clean records → run rules → read grouped report → mark a follow-up done → verify saved state and patient history. Document what this test does **not** cover (for example, real clinic systems, real authentication, and external LLM reliability).
 
-**CI:** every pull request runs `pytest -q`; changes reach `main` through reviewed PRs only. Keep the main branch green, and use feature branches with linked task-board items.
+**CI:** `.github/workflows/ci.yml` runs `python -m pytest -q` on every pull
+request and push to `main`, using Python 3.11 and `requirements-dev.txt` (which
+includes the application dependencies). Pytest discovers both test directories
+through `pyproject.toml`. The job has read-only repository permissions and a
+10-minute timeout. Its explicit check name is `test`; keep that name stable
+because branch protection references it.
+
+**Merge gate:** GitHub branch protection for `main` requires a pull request and
+the GitHub Actions `test` check to pass, with the PR branch up to date before
+merging. These rules also apply to administrators. Configure them under
+**Settings → Branches → Branch protection rules**: require a pull request,
+require status checks (`test` from GitHub Actions), require branches to be up to
+date, and disallow bypassing these settings. Workflow YAML runs the check;
+GitHub repository settings enforce the merge gate. CI success is automatic;
+requiring a teammate's approving review is a separate setting.
 
 ## 11. Docker and data persistence
 
-Docker must mount the database on a **named volume** so deleting or replacing the container does not delete visit/follow-up records.
+The container uses Python 3.11 and runs `uvicorn app.main:app` as the non-root
+`tracker` user, listening on `0.0.0.0:8000`. SQLite belongs on a **named volume**
+mounted at `/data`, with `FOLLOWUP_DB_PATH=/data/followups.db`.
 
-Run the current scaffold with `docker compose up --build`. Compose mounts the
-named `followup_data` volume at `/data`; the web app does not initialize or write
-to the database yet. `docker compose down` keeps the volume. Adding `--volumes` deletes
-it. Versioned release commands below are for future completed releases.
+**Teammate setup:** install Git and [Docker Desktop](https://docs.docker.com/get-started/get-docker/)
+for your operating system, then start Docker Desktop and wait for its engine to
+be ready. Desktop includes Compose; Linux users with Docker Engine can instead
+install the [Compose plugin](https://docs.docker.com/compose/install/).
+Local Python, a virtual environment, and a separate SQLite installation are not
+needed to run the container.
+
+Clone the repository and check that Docker and Compose are available:
 
 ```bash
-# Build the versioned image after implementing the Dockerfile.
-docker build -t visit-followup-tracker:1.0.0 .
+git clone https://github.com/tejdeep-pathipati9/visit-follow-up-tracker.git
+cd visit-follow-up-tracker
+docker info
+docker compose version
+```
 
-# Run the web app; SQLite is stored on the volume, not in the image.
+If you already have a clone, use that checkout. Check out the branch you want
+to run before building; before this change is merged, use
+`git switch feature/ci-docker-setup`. Compose supplies the database path, so
+these Docker commands do not need a local `.env` file or an LLM API key.
+
+Build, explicitly initialize the schema with the existing script, and start the
+application using Compose:
+
+```bash
+docker compose build
+docker compose run --rm app python scripts/table_generate.py
+docker compose up -d
+curl --fail http://localhost:8000/health
+docker compose logs app
+```
+
+For day-to-day work, run these commands from the repository root:
+
+```bash
+docker compose stop             # Stop the app, keeping the container and data.
+docker compose start            # Start the stopped app again.
+```
+
+After pulling new code on your chosen branch, run `docker compose up -d --build`
+to rebuild and replace the app container while retaining the database. Each
+teammate has a separate local database; sample JSON is not imported automatically.
+If Docker cannot connect to the daemon, start Docker Desktop (or your Linux
+Docker service). If port 8000 is already in use, stop the other local server or
+container using that port before starting this app.
+
+Open `http://localhost:8000` for the placeholder home page. Compose manages a
+project-prefixed volume such as `visit-follow-up-tracker_followup_data`.
+`docker compose down` keeps that volume; `docker compose down --volumes` deletes
+it and its database. Keep the same Compose project name to reuse the volume.
+
+Alternatively, build and run directly with Docker:
+
+```bash
+docker build -t visit-followup-tracker:dev .
+docker volume create followup_data
+docker run --rm -v followup_data:/data \
+  -e FOLLOWUP_DB_PATH=/data/followups.db \
+  visit-followup-tracker:dev python scripts/table_generate.py
 docker run -d --name followup-app -p 8000:8000 \
   -v followup_data:/data \
   -e FOLLOWUP_DB_PATH=/data/followups.db \
-  visit-followup-tracker:1.0.0
+  visit-followup-tracker:dev
 ```
 
-The Dockerfile should start the web server bound to `0.0.0.0:8000`. Exclude `.venv`, `.env`, local databases, backups, caches, and Git metadata through `.dockerignore`.
+The direct Docker commands use `followup_data`, a separate volume from Compose's
+project-prefixed volume. Reuse the same volume when replacing a container. Mount
+the directory, rather than just the database file, so SQLite sidecar files also
+persist. New named volumes inherit `/data` ownership from the image, allowing
+the non-root user to initialize and write the database.
+
+Initialization creates missing tables and preserves existing records; it does
+not perform schema migrations. The current web scaffold does not read or write
+SQLite, and `/health` checks process health only. Container persistence can be
+checked with the initializer and Python's `sqlite3`; verification through business
+endpoints must wait for the database/service implementation.
+
+`.dockerignore` excludes environment files, local databases and sidecars,
+backups, caches, virtual environments, and Git metadata. The image includes the
+schema and initializer, with runtime dependencies only. Versioned release
+commands in the next section remain examples for future completed releases.
 
 ## 12. Releases, upgrade, rollback, and backup
 
