@@ -1,0 +1,25 @@
+{
+  "patients": [{"patient_id": "P001", "name": "Sample Patient"}],
+  "staff": [{"staff_id": "S001", "name": "Dr. Example", "role": "doctor"}],
+  "episodes": [{
+    "episode_id": "E001",
+    "patient_id": "P001",
+    "description": "Synthetic leg-injury case",
+    "opened_at": "2026-10-15"
+  }],
+  "visits": [{
+    "visit_id": "V001",
+    "patient_id": "P001",
+    "episode_id": "E001",
+    "staff_id": "S001",
+    "visit_date": "2026-10-15",
+    "notes": "Synthetic visit",
+    "followups": [{
+      "followup_id": "F001",
+      "action_type": "lab",
+      "due_date": "2026-10-20",
+      "assigned_staff_id": null,
+      "status": "open"
+    }]
+  }]
+}

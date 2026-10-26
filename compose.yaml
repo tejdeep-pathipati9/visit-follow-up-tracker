@@ -1,0 +1,12 @@
+services:
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      FOLLOWUP_DB_PATH: /data/followups.db
+    volumes:
+      - followup_data:/data
+
+volumes:
+  followup_data:
