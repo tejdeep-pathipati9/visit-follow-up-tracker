@@ -1,1 +1,1 @@
-"""TODO: Read-only natural-language interpretation into validated filters."""
+"""TODO: Natural-language interpretation into read-only SQL and bound parameters."""
