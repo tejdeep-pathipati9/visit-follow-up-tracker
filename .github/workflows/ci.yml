@@ -10,7 +10,10 @@ permissions:
 
 jobs:
   test:
+    # Keep this name stable: main requires the "test" status check.
+    name: test
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -20,5 +23,7 @@ jobs:
           cache-dependency-path: |
             requirements.txt
             requirements-dev.txt
-      - run: python -m pip install -r requirements-dev.txt
-      - run: python -m pytest -q
+      - name: Install test dependencies
+        run: python -m pip install -r requirements-dev.txt
+      - name: Run unit and integration tests
+        run: python -m pytest -q
