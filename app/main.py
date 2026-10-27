@@ -6,6 +6,7 @@ import sqlite3
 
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from app.api import router
@@ -13,6 +14,7 @@ from app.repository import QueryError
 
 app = FastAPI(title="Visit Follow-Up Tracker", version="0.1.0")
 app.include_router(router)
+app.mount("/static", StaticFiles(directory=Path(__file__).parent / "static"), name="static")
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 
 
