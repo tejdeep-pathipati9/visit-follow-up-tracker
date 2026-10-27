@@ -1,4 +1,4 @@
-"""Execute caller-supplied SQL with SQLite-enforced read-only permissions."""
+"""Run server-built search SQL and AI-generated SQL with SQLite-enforced read-only permissions."""
 
 import json
 import sqlite3
@@ -18,6 +18,8 @@ ALLOWED_FUNCTIONS = frozenset({
     "substr", "substring", "sum", "time", "total", "trim", "typeof",
     "unicode", "unixepoch", "upper",
 })
+# Contact details read as NULL in AI-generated queries; staff UI searches still see them.
+SENSITIVE_COLUMNS = frozenset({("patients", "phone"), ("patients", "email")})
 QUERY_TIMEOUT_SECONDS = 2.0
 MAX_VM_STEPS = 1_000_000
 MAX_RESULT_BYTES = 4 * 1024 * 1024
@@ -46,7 +48,11 @@ def schema_text(connection: sqlite3.Connection) -> str:
     ) + "\n"
 
 
-def execute_query(connection: sqlite3.Connection, request: QueryRequest) -> QueryResponse:
+def execute_query(
+    connection: sqlite3.Connection,
+    request: QueryRequest,
+    hidden_columns: frozenset[tuple[str, str]] = frozenset(),
+) -> QueryResponse:
     denied = False
     timed_out = False
     steps = 0
@@ -59,7 +65,8 @@ def execute_query(connection: sqlite3.Connection, request: QueryRequest) -> Quer
         # Some SQLite builds omit the database name for COUNT(*) table reads.
         main_table_read = database == "main" or (database is None and arg2 == "")
         if action == sqlite3.SQLITE_READ and main_table_read and arg1 in READABLE_TABLES:
-            return sqlite3.SQLITE_OK
+            # SQLITE_IGNORE substitutes NULL, so hidden values cannot be selected or filtered on.
+            return sqlite3.SQLITE_IGNORE if (arg1, arg2) in hidden_columns else sqlite3.SQLITE_OK
         if action == sqlite3.SQLITE_FUNCTION and (arg2 or "").lower() in ALLOWED_FUNCTIONS:
             return sqlite3.SQLITE_OK
         denied = True

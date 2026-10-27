@@ -1,94 +1,59 @@
-"""Real SQLite tests for schema discovery and read-only caller-supplied SQL."""
+"""Real SQLite tests for schema discovery and restricted execution of server-built SQL.
+
+Arbitrary SQL is no longer accepted over HTTP; these tests call the repository
+that UI searches and natural-language questions use internally.
+"""
 
 from contextlib import closing
 import sqlite3
 
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 import pytest
 
+from app import repository
 from app.db import read_database
 from app.main import app
-from scripts.table_generate import table_generate
-
-@pytest.fixture
-def database(tmp_path, monkeypatch):
-    path = table_generate(tmp_path / "search.db")
-    monkeypatch.setenv("FOLLOWUP_DB_PATH", str(path))
-    with closing(sqlite3.connect(path)) as connection:
-        connection.execute("PRAGMA foreign_keys = ON")
-        connection.executemany(
-            "INSERT INTO patients (patient_id, name) VALUES (?, ?)",
-            [("P001", "Alice Example"), ("P002", "김테스트")],
-        )
-        connection.executemany(
-            "INSERT INTO staff VALUES (?, ?, ?)",
-            [("S001", "Dr. Example", "doctor"), ("S002", "Nurse Sample", "nurse"),
-             ("S003", "Dr. Duplicate", "doctor"), ("S004", "Dr. Duplicate", "doctor")],
-        )
-        connection.executemany(
-            "INSERT INTO episodes VALUES (?, ?, ?, ?, ?)",
-            [("E001", "P001", "Synthetic injury", "2026-10-15", None),
-             ("E002", "P002", "Synthetic recheck", "2026-10-20", None)],
-        )
-        connection.executemany(
-            "INSERT INTO visits VALUES (?, ?, ?, ?, ?, ?)",
-            [("V001", "P001", "E001", "S002", "2026-10-15", "Synthetic 100%_ note"),
-             ("V002", "P002", "E002", "S001", "2026-10-20", "Synthetic visit")],
-        )
-        connection.executemany(
-            "INSERT INTO followups VALUES (?, ?, ?, ?, ?, ?, ?)",
-            [("F001", "V001", "lab", "2026-10-25", None, "open", None),
-             ("F002", "V001", "lab", "2026-10-26", "S001", "open", None),
-             ("F003", "V002", "recheck", "2026-11-02", "S002", "open", None),
-             ("F004", "V002", "referral", "2026-11-03", None, "open", None),
-             ("F005", "V001", "lab", "2026-10-20", None, "done", "2026-10-21T12:00:00Z"),
-             ("F006", "V002", "referral", "2026-10-24", "S001", "open", None),
-             ("F007", "V002", "lab", "2026-10-25", "S001", "open", None)],
-        )
-        connection.commit()
-    return path
+from app.models import QueryRequest
+from app.repository import QueryError
 
 
-@pytest.fixture
-def client(database):
-    with TestClient(app) as client:
-        yield client
+def run(sql, parameters=None, hidden_columns=frozenset(), **options):
+    request = QueryRequest(query=sql, parameters=parameters if parameters is not None else [], **options)
+    with read_database() as connection:
+        return repository.execute_query(connection, request, hidden_columns).model_dump()
 
 
-def query(client, sql, parameters=None, **options):
-    response = client.post("/api/query", json={
-        "query": sql, "parameters": parameters if parameters is not None else [], **options,
-    })
-    assert response.status_code == 200, response.text
-    return response.json()
+def rejected(sql, parameters=None):
+    with pytest.raises(QueryError) as error:
+        run(sql, parameters)
+    return error.value
 
 
 @pytest.mark.parametrize(("table", "count"), [
     ("patients", 2), ("staff", 4), ("episodes", 2), ("visits", 2), ("followups", 7),
 ])
-def test_all_application_tables_can_be_queried(client, table, count):
-    result = query(client, f"SELECT * FROM {table}")
+def test_all_application_tables_can_be_queried(database, table, count):
+    result = run(f"SELECT * FROM {table}")
     assert result["row_count"] == count
     assert len(result["rows"]) == count
     assert result["truncated"] is False
     assert all(len(row) == len(result["columns"]) for row in result["rows"])
 
 
-def test_bound_parameters_and_korean_text(client):
-    result = query(client, "SELECT patient_id, name, phone FROM patients WHERE name = ?", ["김테스트"])
+def test_bound_parameters_and_non_ascii_text(database):
+    result = run("SELECT patient_id, name, phone FROM patients WHERE name = ?", ["Zoë Tëst"])
     assert result == {
         "columns": ["patient_id", "name", "phone"],
-        "rows": [["P002", "김테스트", None]], "row_count": 1, "truncated": False,
+        "rows": [["P002", "Zoë Tëst", None]], "row_count": 1, "truncated": False,
     }
-    result = query(client, "SELECT patient_id FROM patients WHERE name = :name", {"name": "Alice Example"})
-    assert result["rows"] == [["P001"]]
-    result = query(client, "SELECT patient_id FROM patients WHERE name = ?", ["' OR 1=1 --"])
-    assert result["rows"] == []
-    assert query(client, "SELECT ? AS literal", ["  preserve spaces  "])["rows"] == [["  preserve spaces  "]]
+    assert run("SELECT patient_id FROM patients WHERE name = :name", {"name": "Alice Example"})["rows"] == [["P001"]]
+    assert run("SELECT patient_id FROM patients WHERE name = ?", ["' OR 1=1 --"])["rows"] == []
+    assert run("SELECT ? AS literal", ["  preserve spaces  "])["rows"] == [["  preserve spaces  "]]
 
 
-def test_join_filters_and_sorting_are_defined_by_the_sql(client):
-    result = query(client, """
+def test_join_filters_and_sorting_are_defined_by_the_sql(database):
+    result = run("""
         SELECT f.followup_id, p.name AS patient_name, s.name AS assigned_staff_name
         FROM followups f JOIN visits v ON v.visit_id = f.visit_id
         JOIN patients p ON p.patient_id = v.patient_id
@@ -98,24 +63,24 @@ def test_join_filters_and_sorting_are_defined_by_the_sql(client):
     """, ["open", "2026-10-26"])
     assert result["columns"] == ["followup_id", "patient_name", "assigned_staff_name"]
     assert result["rows"] == [
-        ["F006", "김테스트", "Dr. Example"],
+        ["F006", "Zoë Tëst", "Dr. Example"],
         ["F001", "Alice Example", None],
-        ["F007", "김테스트", "Dr. Example"],
+        ["F007", "Zoë Tëst", "Dr. Example"],
     ]
 
 
-def test_cte_aggregates_and_window_functions(client):
-    result = query(client, """
+def test_cte_aggregates_and_window_functions(database):
+    result = run("""
         WITH pending AS (SELECT * FROM followups WHERE status = 'open')
         SELECT action_type, COUNT(*) AS count FROM pending
         GROUP BY action_type ORDER BY action_type
     """)
     assert result["rows"] == [["lab", 3], ["recheck", 1], ["referral", 2]]
-    assert query(client, "SELECT row_number() OVER (ORDER BY patient_id) AS n FROM patients")["rows"] == [[1], [2]]
+    assert run("SELECT row_number() OVER (ORDER BY patient_id) AS n FROM patients")["rows"] == [[1], [2]]
 
 
-def test_duplicate_column_names_preserve_both_values(client):
-    result = query(client, """
+def test_duplicate_column_names_preserve_both_values(database):
+    result = run("""
         SELECT p.name, s.name FROM patients p CROSS JOIN staff s
         ORDER BY p.patient_id, s.staff_id LIMIT 1
     """)
@@ -123,21 +88,32 @@ def test_duplicate_column_names_preserve_both_values(client):
     assert result["rows"] == [["Alice Example", "Dr. Example"]]
 
 
-def test_sql_pagination_and_response_cap(client):
-    result = query(client, "SELECT followup_id FROM followups ORDER BY followup_id LIMIT ? OFFSET ?", [2, 2])
+def test_sql_pagination_and_response_cap(database):
+    result = run("SELECT followup_id FROM followups ORDER BY followup_id LIMIT ? OFFSET ?", [2, 2])
     assert result["rows"] == [["F003"], ["F004"]]
     assert result["truncated"] is False
-    capped = query(client, "SELECT followup_id FROM followups ORDER BY followup_id", max_rows=2)
+    capped = run("SELECT followup_id FROM followups ORDER BY followup_id", max_rows=2)
     assert capped["rows"] == [["F001"], ["F002"]]
     assert capped["truncated"] is True
     assert capped["row_count"] == 2
-    exact = query(client, "SELECT patient_id FROM patients ORDER BY patient_id", max_rows=2)
-    assert exact["truncated"] is False
+    assert run("SELECT patient_id FROM patients ORDER BY patient_id", max_rows=2)["truncated"] is False
 
 
-def test_empty_result_retains_columns(client):
-    result = query(client, "SELECT patient_id, name FROM patients WHERE patient_id = 'missing'")
+def test_empty_result_retains_columns(database):
+    result = run("SELECT patient_id, name FROM patients WHERE patient_id = 'missing'")
     assert result == {"columns": ["patient_id", "name"], "rows": [], "row_count": 0, "truncated": False}
+
+
+def test_hidden_columns_read_as_null_and_cannot_be_filtered(database):
+    hidden = repository.SENSITIVE_COLUMNS
+    assert run("SELECT name, phone, email FROM patients WHERE patient_id = 'P001'", hidden_columns=hidden)["rows"] == [
+        ["Alice Example", None, None],
+    ]
+    assert run("SELECT * FROM patients ORDER BY patient_id", hidden_columns=hidden)["rows"][0] == [
+        "P001", "Alice Example", None, None,
+    ]
+    assert run("SELECT patient_id FROM patients WHERE phone = '555-0101'", hidden_columns=hidden)["rows"] == []
+    assert run("SELECT phone FROM patients WHERE patient_id = 'P001'")["rows"] == [["555-0101"]]
 
 
 def test_schema_is_live_text_with_relationships_and_no_record_data(client, database):
@@ -155,7 +131,7 @@ def test_schema_is_live_text_with_relationships_and_no_record_data(client, datab
     assert "idx_followups_status_due" in response.text
     assert "Alice Example" not in response.text
     assert "private_settings" not in response.text
-    assert client.post("/api/query", json={"query": "SELECT * FROM private_settings"}).status_code == 422
+    assert rejected("SELECT * FROM private_settings").code == "query_not_allowed"
 
 
 @pytest.mark.parametrize("sql", [
@@ -180,14 +156,13 @@ def test_schema_is_live_text_with_relationships_and_no_record_data(client, datab
     "SELECT * FROM patients; DELETE FROM patients;",
     "EXPLAIN DELETE FROM followups",
 ])
-def test_disallowed_sql_cannot_change_database(client, database, sql):
+def test_disallowed_sql_cannot_change_database(database, sql):
     with closing(sqlite3.connect(database)) as connection:
         before = list(connection.iterdump())
-    response = client.post("/api/query", json={"query": sql})
-    assert response.status_code == 422, response.text
+    assert rejected(sql).status_code == 422
     with closing(sqlite3.connect(database)) as connection:
         assert list(connection.iterdump()) == before
-    assert query(client, "SELECT COUNT(*) FROM patients")["rows"] == [[2]]
+    assert run("SELECT COUNT(*) FROM patients")["rows"] == [[2]]
 
 
 @pytest.mark.parametrize("body", [
@@ -198,8 +173,9 @@ def test_disallowed_sql_cannot_change_database(client, database, sql):
     {"query": "SELECT 1", "parameters": [0] * 1_001},
     {"query": "SELECT 1", "max_rows": "10"},
 ])
-def test_invalid_requests_return_422(client, body):
-    assert client.post("/api/query", json=body).status_code == 422
+def test_invalid_requests_are_rejected(body):
+    with pytest.raises(ValidationError):
+        QueryRequest(**body)
 
 
 @pytest.mark.parametrize(("sql", "parameters"), [
@@ -208,38 +184,33 @@ def test_invalid_requests_return_422(client, body):
     ("SELECT :name", {"other": "missing"}),
     ("SELECT * FROM missing_table", []),
 ])
-def test_invalid_sql_and_bindings_return_clear_errors(client, sql, parameters):
-    response = client.post("/api/query", json={"query": sql, "parameters": parameters})
-    assert response.status_code == 422
-    assert response.json()["detail"]["code"] == "invalid_query"
+def test_invalid_sql_and_bindings_return_clear_errors(database, sql, parameters):
+    assert rejected(sql, parameters).code == "invalid_query"
 
 
-def test_recursive_query_has_execution_budget(client):
-    response = client.post("/api/query", json={"query": """
+def test_recursive_query_has_execution_budget(database):
+    error = rejected("""
         WITH RECURSIVE numbers(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM numbers)
         SELECT SUM(n) FROM numbers
-    """})
-    assert response.status_code == 408
-    assert response.json()["detail"]["code"] == "query_limit_exceeded"
-    assert query(client, "SELECT COUNT(*) FROM patients")["rows"] == [[2]]
+    """)
+    assert (error.code, error.status_code) == ("query_limit_exceeded", 408)
+    assert run("SELECT COUNT(*) FROM patients")["rows"] == [[2]]
 
 
-def test_result_size_is_bounded(client, monkeypatch):
+def test_result_size_is_bounded(database, monkeypatch):
     monkeypatch.setattr("app.repository.MAX_RESULT_BYTES", 20)
-    result = query(client, "SELECT name FROM patients ORDER BY patient_id")
+    result = run("SELECT name FROM patients ORDER BY patient_id")
     assert result["rows"] == [["Alice Example"]]
     assert result["truncated"] is True
 
 
 @pytest.mark.parametrize("sql", ["SELECT X'FF'", "SELECT 1e999"])
-def test_non_json_values_return_422(client, sql):
-    response = client.post("/api/query", json={"query": sql})
-    assert response.status_code == 422
-    assert response.json()["detail"]["code"] == "unsupported_result"
+def test_non_json_values_are_rejected(database, sql):
+    assert rejected(sql).code == "unsupported_result"
 
 
-def test_binary_can_be_requested_as_hex(client):
-    assert query(client, "SELECT HEX(X'FF') AS value")["rows"] == [["FF"]]
+def test_binary_can_be_requested_as_hex(database):
+    assert run("SELECT HEX(X'FF') AS value")["rows"] == [["FF"]]
 
 
 def test_read_connection_cannot_write(database):
@@ -253,21 +224,23 @@ def test_missing_database_returns_503_without_creating_file(tmp_path, monkeypatc
     missing = tmp_path / "missing.db"
     monkeypatch.setenv("FOLLOWUP_DB_PATH", str(missing))
     with TestClient(app) as client:
-        for response in (
-            client.get("/api/schema"),
-            client.post("/api/query", json={"query": "SELECT * FROM patients"}),
-        ):
+        for response in (client.get("/api/schema"), client.get("/api/followups")):
             assert response.status_code == 503
             assert response.json()["detail"]["code"] == "database_unavailable"
     assert not missing.exists()
 
 
-def test_comment_prefixed_sql_is_supported(client):
-    assert query(client, "-- Read a patient\n SELECT patient_id FROM patients ORDER BY patient_id LIMIT 1;")["rows"] == [["P001"]]
+def test_comment_prefixed_sql_is_supported(database):
+    assert run("-- Read a patient\n SELECT patient_id FROM patients ORDER BY patient_id LIMIT 1;")["rows"] == [["P001"]]
 
 
-def test_openapi_exposes_generic_endpoints_only(client):
+def test_raw_sql_is_not_accepted_over_http(client):
     paths = client.get("/openapi.json").json()["paths"]
-    assert "/api/schema" in paths
-    assert "requestBody" in paths["/api/query"]["post"]
-    assert not any(path.startswith("/api/followups") for path in paths)
+    assert "/api/query" not in paths
+    assert client.post("/api/query", json={"query": "SELECT * FROM patients"}).status_code == 404
+    names = {
+        parameter["name"] for methods in paths.values() for operation in methods.values()
+        for parameter in operation.get("parameters", [])
+    }
+    assert not names & {"query", "sql"}
+    assert "QueryRequest" not in client.get("/openapi.json").json()["components"]["schemas"]
