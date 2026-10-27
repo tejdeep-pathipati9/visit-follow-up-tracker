@@ -4,13 +4,13 @@ A lightweight clinic operations tool for tracking patient visit follow-ups, iden
 
 > **Project status:** Proposed technical design for the Week 3 team project. This README documents the intended architecture and interfaces; it does **not** imply that every feature has been implemented. **Synthetic data only**—never load real patient records.
 
-**Implemented:** the repository includes a runnable placeholder home
-page, `/health`, the proposed core SQL schema, sample data, domain constants, development
+**Implemented:** the repository includes a web UI, `/health`, the proposed core SQL schema, sample data, domain constants, development
 configuration, Docker Compose, a database initialization script, and tests.
 The backend exposes predefined APIs to search, view, create, and update patients,
 staff, episodes, visits, and follow-ups, plus read-only natural-language questions
-(`/api/ask`). Bulk data import, reports, status-change history, authentication,
-and the web UI remain planned. See [Architecture](#architecture).
+(`/api/ask`), and a web UI for both (see [Web UI](#web-ui)). Bulk data import,
+reports, status-change history, and authentication remain planned. See
+[Architecture](#architecture).
 Run `python scripts/table_generate.py` to initialize the core schema explicitly;
 the web app does not apply it automatically.
 
@@ -384,6 +384,27 @@ with `status`, and unassign staff with `null`.
 Interactive API documentation, including every filter and field, is available at
 `http://localhost:8000/docs`.
 
+### Web UI
+
+`http://localhost:8000` serves one page (`app/templates/index.html`,
+`app/static/app.js`, `app/static/app.css`) with no frontend build step. It calls
+only the APIs below.
+
+- **Summary cards:** overdue, due soon, unassigned, open follow-ups, patients,
+  open episodes, and recent visits. Clicking a card opens the matching filtered list.
+- **Patients, Follow-ups, Visits, Episodes, Staff tabs:** a filter panel
+  (dropdowns, checkboxes, date ranges, and sliders that stay off until ticked),
+  free-text search, sort, and paging. Results update as filters change.
+- **Detail panel:** click a row to see the record with its related history, edit
+  it, and add related records (an episode for a patient, a visit for an episode,
+  a follow-up for a visit). Follow-ups have one-click **Mark done** / **Reopen**.
+  **New** creates a record; leave the ID empty to generate one.
+- **Ask tab:** a free-form question answered read only through `/api/ask`. It
+  shows the decision, the explanation, the SQL that ran, and the result table;
+  change requests are refused with a pointer to the edit screens.
+- **As of** date: re-evaluates overdue/due-soon flags and relative filters for
+  another day.
+
 ### Retrieve the schema
 
 ```bash
@@ -547,7 +568,8 @@ visit-follow-up-tracker/
 │   ├── rules/                  # FollowUpRule + subclasses
 │   ├── ingestion/              # Loader, validation, synthetic-data helpers
 │   ├── ai/                     # Decisions API prompt gate and read-only SQL generation
-│   └── templates/              # Minimal web templates (no design spec here)
+│   ├── templates/index.html    # Web UI page shell
+│   └── static/                 # Web UI script and styles (no build step)
 ├── data/sample_visits.json     # Synthetic data only
 ├── scripts/
 │   ├── table_generate.py      # Initialize core SQLite tables and indexes
@@ -582,7 +604,7 @@ uv run python scripts/table_generate.py
 uv run uvicorn app.main:app --reload --env-file .env
 ```
 
-Open `http://localhost:8000` for the placeholder home page, `/health` for process
+Open `http://localhost:8000` for the web UI, `/health` for process
 health, or `/docs` for the currently registered routes. Environment files are
 loaded only when explicitly requested with `--env-file`; exported environment
 variables can also be used directly. `uv sync --locked` creates `.venv` and installs
@@ -715,7 +737,7 @@ If Docker cannot connect to the daemon, start Docker Desktop (or your Linux
 Docker service). If port 8000 is already in use, stop the other local server or
 container using that port before starting this app.
 
-Open `http://localhost:8000` for the placeholder home page. Compose manages a
+Open `http://localhost:8000` for the web UI. Compose manages a
 project-prefixed volume such as `visit-follow-up-tracker_followup_data`.
 `docker compose down` keeps that volume; `docker compose down --volumes` deletes
 it and its database. Keep the same Compose project name to reuse the volume.

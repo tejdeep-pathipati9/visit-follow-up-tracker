@@ -14,6 +14,9 @@
 
 ### Added
 
+- A web UI (one Jinja2 page with plain JavaScript): summary cards, filterable and
+  sortable lists for every record type, a detail panel with edit, create, and
+  follow-up Mark done/Reopen, and an Ask tab for read-only questions.
 - Create (`POST`) and partial update (`PATCH`) endpoints for patients, staff,
   episodes, visits, and follow-ups using fixed, parameterized SQL in one
   transaction per request. IDs are generated when omitted; follow-up completion

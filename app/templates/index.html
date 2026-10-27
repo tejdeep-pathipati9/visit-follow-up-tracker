@@ -4,12 +4,74 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Visit Follow-Up Tracker</title>
+    <link rel="stylesheet" href="{{ url_for('static', path='app.css') }}">
   </head>
   <body>
+    <header class="topbar">
+      <div>
+        <h1>Visit Follow-Up Tracker</h1>
+        <p class="muted">Synthetic data only. Do not enter real patient records.</p>
+      </div>
+      <label class="as-of">
+        As of
+        <input type="date" id="as-of-date">
+      </label>
+    </header>
+
+    <section id="dashboard" class="dashboard" aria-label="Summary"></section>
+
+    <nav class="tabs" id="tabs" role="tablist"></nav>
+
     <main>
-      <h1>Visit Follow-Up Tracker</h1>
-      <p>Development preview. Follow-up tracking features are not available yet.</p>
-      <p>Synthetic data only. Do not enter real patient records.</p>
+      <section id="ask-view" class="view" hidden>
+        <form id="ask-form" class="ask-form">
+          <label for="ask-question">Ask a question about the records (read only)</label>
+          <textarea id="ask-question" rows="3" maxlength="1000"
+            placeholder="Which patients have overdue lab follow-ups, and who is assigned?"></textarea>
+          <div class="ask-actions">
+            <div id="ask-examples" class="chips"></div>
+            <button type="submit" class="primary">Ask</button>
+          </div>
+        </form>
+        <div id="ask-result"></div>
+      </section>
+
+      <section id="records-view" class="view records" hidden>
+        <aside class="filters">
+          <div class="filters-head">
+            <h2>Filters</h2>
+            <button type="button" id="clear-filters" class="link">Clear all</button>
+          </div>
+          <form id="filter-form"></form>
+        </aside>
+        <div class="results">
+          <div class="toolbar">
+            <input type="search" id="search-text" placeholder="Search">
+            <label>Sort <select id="sort-select"></select></label>
+            <span id="result-count" class="muted"></span>
+            <button type="button" id="new-record" class="primary">New</button>
+          </div>
+          <div class="table-wrap"><table id="results-table"></table></div>
+          <div class="pager">
+            <button type="button" id="prev-page">Previous</button>
+            <span id="page-info" class="muted"></span>
+            <button type="button" id="next-page">Next</button>
+          </div>
+        </div>
+      </section>
     </main>
+
+    <aside id="drawer" class="drawer" hidden aria-live="polite">
+      <div class="drawer-head">
+        <button type="button" id="drawer-back" class="link" hidden>Back</button>
+        <h2 id="drawer-title"></h2>
+        <button type="button" id="drawer-close" class="link" aria-label="Close">Close</button>
+      </div>
+      <div id="drawer-body" class="drawer-body"></div>
+    </aside>
+
+    <div id="toast" class="toast" role="status" hidden></div>
+
+    <script src="{{ url_for('static', path='app.js') }}" defer></script>
   </body>
 </html>
