@@ -7,9 +7,10 @@ A lightweight clinic operations tool for tracking patient visit follow-ups, iden
 **Implemented:** the repository includes a runnable placeholder home
 page, `/health`, the proposed core SQL schema, sample data, domain constants, development
 configuration, Docker Compose, a database initialization script, and tests.
-The backend exposes the live schema as text and executes read-only SQL across
-application tables. Data ingestion, reports, history, updates, the search UI, and
-natural-language interpretation remain planned.
+The backend exposes predefined APIs to search, view, create, and update patients,
+staff, episodes, visits, and follow-ups, plus read-only natural-language questions
+(`/api/ask`). Bulk data import, reports, status-change history, authentication,
+and the web UI remain planned. See [Architecture](#architecture).
 Run `python scripts/table_generate.py` to initialize the core schema explicitly;
 the web app does not apply it automatically.
 
@@ -47,12 +48,110 @@ Assignments for the new web/LLM work are **proposed** and should be agreed on by
 | Rule execution | Deterministic Python classes, **not** the LLM | Predictable results and easy unit testing |
 | Current date | Inject `as_of_date` into rule evaluation | Repeatable tests; normally defaults to today's date |
 | Rule defaults | Constants in `app/constants.py` | Keeps the small set of domain defaults in application code |
-| LLM role | **Read-only** natural language → SQL using the published schema (planned) | A shared query API enforces read-only access and execution limits |
-| Write operations | Explicit staff action through backend service | No automatic care decisions or follow-up changes |
+| LLM role | A decision model rejects prompts that ask to change data; a second model writes **read-only** SQL | The SQLite authorizer, not the model, enforces read-only access and execution limits |
+| Write operations | Predefined create/update endpoints with fixed SQL; no deletes; never through the LLM | Changes are explicit staff actions; records are preserved |
 | Deployment | Docker, with SQLite on a named volume | Data persists across container replacement |
 | Release strategy | Tagged 1.0.0 and 1.1.0 images + Git tags | Reproducible upgrade and rollback |
 
 **Scope caveat:** The original assignment explicitly asks for a CLI and status-change history. This product design prioritizes a web interface and treats the dedicated `status_changes` table as optional. **Both deviations need instructor approval**; otherwise, retain a thin CLI wrapper and implement status-change history (either in `status_changes` or an equivalent append-only audit table) before calling 1.0.0 assignment-complete.
+
+### Architecture
+
+The backend has two kinds of callable operations. Callers never send SQL to either.
+
+| | Predefined API | LLM question (`POST /api/ask`) |
+|---|---|---|
+| What it can do | **Read and write**: search and view patients, staff, episodes, visits, and follow-ups; create and update them (no deletes) | **Read only**: answer a free-form question |
+| What the caller sends | Filter values or record fields | A question in plain language |
+| Who writes the SQL | Developers, fixed in `app/search.py` (reads) and `app/writes.py` (writes) | An OpenAI model, inside the server |
+| Database connection | Read-only for searches; writable, one transaction per request, for changes | Read-only, always |
+| What protects the data | Validated request models, bound parameters, allowlisted columns and sorts, reference checks | Change requests rejected before SQL exists; the SQLite authorizer and read-only connection block writes whatever the model produces; phone and email read as NULL |
+
+Each box in the diagrams below names its role first and the code location in parentheses.
+
+#### Predefined read
+
+Example: `GET /api/patients?q=alice` or `GET /api/followups?preset=overdue&action_type=lab`.
+Every record type works the same way with its own filters.
+
+```mermaid
+sequenceDiagram
+    participant API as Search endpoint<br/>(app/api.py)
+    participant Search as Record search<br/>(search.search_patients, search_visits, ...)
+    participant Where as Filter-to-SQL converter<br/>(search.Where)
+    participant Runner as Read-only SQL runner<br/>(repository.execute_query)
+    participant DB as SQLite database<br/>(read-only connection)
+
+    Note over API: The request model validates every filter<br/>(types, allowed values, ranges, unknown names rejected)
+    API->>Search: validated filters
+    Search->>Where: add a clause for each filter sent
+    Note over Where: Clause text is fixed in code.<br/>Values become :p1, :p2 ... bound parameters.<br/>A preset expands to its saved filters.
+    Where-->>Search: WHERE text + parameters
+    Note over Search: The sort name maps to a fixed ORDER BY
+    Search->>Runner: fixed SELECT + parameters
+    Runner->>DB: run with authorizer and limits
+    DB-->>Runner: rows
+    Runner-->>Search: rows
+    Note over Search: Follow-up rule flags and counts are added
+    Search-->>API: page of results (items, total)
+```
+
+#### Predefined write
+
+Example: `PATCH /api/patients/P001 {"phone": "555-0102"}` or
+`PATCH /api/followups/F001 {"status": "done"}`. `POST` creates a record.
+
+```mermaid
+sequenceDiagram
+    participant API as Change endpoint<br/>(app/api.py)
+    participant Writer as Record writer<br/>(app/writes.py)
+    participant DB as SQLite database<br/>(writable connection)
+    participant Search as Record search<br/>(app/search.py)
+
+    Note over API: The request model validates the fields.<br/>IDs and server-controlled fields cannot be sent.
+    API->>DB: BEGIN IMMEDIATE (one transaction per request)
+    API->>Writer: validated fields
+    Writer->>DB: check the record and every referenced ID exist
+    alt missing record or reference, duplicate ID, invalid dates
+        Writer-->>API: 404 / 409 / 422 with a clear reason
+        API->>DB: ROLLBACK (nothing saved)
+    else valid
+        Writer->>DB: fixed INSERT or UPDATE, values bound
+        API->>DB: COMMIT
+        API->>Search: read the saved record
+        Search-->>API: record with current counts and flags
+    end
+```
+
+#### LLM question (read only)
+
+Example: `POST /api/ask {"question": "Which patients had more than two visits this month?"}`
+
+```mermaid
+sequenceDiagram
+    participant Ask as Question handler<br/>(service.ask)
+    participant Gate as Change-request detector<br/>(OpenAI Decisions API, gpt-6-luna)
+    participant Model as SQL writer<br/>(OpenAI Responses API)
+    participant Runner as Read-only SQL runner<br/>(repository.execute_query)
+    participant DB as SQLite database<br/>(read-only connection)
+
+    Ask->>Gate: prompt text only (no schema, no data)
+    Note over Gate: Q1: does it ask to change data?<br/>Q2: read / modify / unrelated
+    Gate-->>Ask: probabilities
+    alt change probability >= 0.3, refusal, or modify
+        Ask-->>Ask: 422 modification_not_allowed (no SQL generated)
+    else unrelated
+        Ask-->>Ask: 422 unsupported_question
+    else read
+        Ask->>Model: question + live schema + date and rule definitions
+        Model-->>Ask: one SELECT + bound parameters + explanation
+        Ask->>Runner: run with patients.phone and patients.email hidden
+        Runner->>DB: SELECT (writes, ATTACH, PRAGMA, extra statements rejected)
+        DB-->>Runner: rows
+        Runner-->>Ask: columns, rows, truncated
+        Note over Ask: Response returns the decision, SQL, parameters, and result
+    end
+```
 
 ## 4. Data model
 
@@ -251,20 +350,39 @@ The rule engine is implemented with a base `FollowUpRule` class and one subclass
 
 **Planned 1.1.0 rule:** `due_before_visit`—flag an open follow-up whose due date is earlier than its source visit date. This is a business-rule warning, not a malformed-date parsing error. The team should confirm this specific choice before implementation.
 
-## 7. Backend queries
+## 7. Backend API
 
-The backend accepts SQL and returns query results for all application tables.
-The frontend or a future AI layer builds the query; the backend does not interpret
-natural language or maintain separate search endpoints for each table.
+Callers send filter values, record fields, or a natural-language question,
+**never SQL**. Predefined SQL is fixed in `app/search.py` (reads) and
+`app/writes.py` (writes); every value is a bound parameter, and column names and
+sort orders come from server-side allowlists. Natural-language SQL is generated
+and executed inside the server on a read-only connection. There is no public
+endpoint that accepts raw SQL.
+
+Every record type has the same set of endpoints:
+
+| Method | Route | Function |
+|---|---|---|
+| `GET` | `/api/{type}` | Search with filters, sorting, and paging |
+| `GET` | `/api/{type}/{id}` | One record with its related history |
+| `POST` | `/api/{type}` | Create a record (omit the ID to get the next free one) |
+| `PATCH` | `/api/{type}/{id}` | Change only the fields sent |
+
+`{type}` is `patients`, `staff`, `episodes`, `visits`, or `followups`. Records are
+never deleted: close an episode with `closed_at`, complete or reopen a follow-up
+with `status`, and unassign staff with `null`.
 
 | Method | Route | Function | Status |
 |---|---|---|---|
 | `GET` | `/api/schema` | Current database schema as plain text | Implemented |
-| `POST` | `/api/query` | Execute one read-only SQL query | Implemented |
-| `POST` | `/api/ask` | Natural-language interpretation | Planned |
-| `POST` | `/api/import` | Import validated synthetic data | Planned |
+| `GET` | `/api/options` | Dropdown values, staff list, date bounds, presets, sorts | Implemented |
+| `GET` | `/api/dashboard` | Headline counts for the home screen | Implemented |
+| `GET` | `/api/followups/stats` | Counts for filtered follow-ups, optionally grouped | Implemented |
+| `POST` | `/api/ask` | Read-only natural-language question | Implemented (needs `OPENAI_API_KEY`) |
+| `POST` | `/api/import` | Bulk import of validated synthetic data | Planned |
 
-Interactive API documentation is available at `http://localhost:8000/docs`.
+Interactive API documentation, including every filter and field, is available at
+`http://localhost:8000/docs`.
 
 ### Retrieve the schema
 
@@ -273,98 +391,138 @@ curl http://localhost:8000/api/schema
 ```
 
 The response is `text/plain` containing the current `CREATE TABLE` and
-`CREATE INDEX` statements, including column types, keys, and relationships.
-It is read from the database, not a static copy of `schema.sql`, and contains
-no patient records. It covers `patients`, `staff`, `episodes`, `visits`, and
-`followups`, plus `status_changes` if that optional table is implemented.
+`CREATE INDEX` statements, read from the database. It contains no patient records.
 
-### Execute a query
+### Search records
+
+Every filter is optional and filters combine with AND. List filters repeat the
+parameter (`action_type=lab&action_type=referral`) and match any value. Text
+filters are case-insensitive partial matches. `as_of_date` (default: today)
+controls rule flags and relative-day filters.
 
 ```bash
-curl -X POST http://localhost:8000/api/query \
+# Find a patient by name, phone, email, or ID
+curl 'http://localhost:8000/api/patients?q=alice'
+
+# One patient with every episode, visit, and follow-up
+curl 'http://localhost:8000/api/patients/P001'
+
+# Visits by one doctor in October, newest first
+curl 'http://localhost:8000/api/visits?staff_name=example&visit_from=2026-10-01&visit_to=2026-10-31&sort=-visit_date'
+
+# Open episodes with three or more visits
+curl 'http://localhost:8000/api/episodes?status=open&visit_count_min=3'
+
+# Open labs due within 3 days, assigned to S002
+curl 'http://localhost:8000/api/followups?status=open&action_type=lab&due_within_days=3&assigned_staff_id=S002'
+```
+
+| Type | Main filters |
+|---|---|
+| Patients | `q`, `patient_id`, `name`, `staff_id` (seen by or assigned to), `has_open_episode`, visit and follow-up count ranges, last-visit and next-due date ranges |
+| Staff | `q`, `staff_id`, `role`, open/overdue follow-up and visit count ranges |
+| Episodes | `q`, `patient_id`, `patient_name`, `description`, `status`, `staff_id`, opened/closed date ranges, `days_open_min/max`, visit count range |
+| Visits | `q`, `patient_id`, `patient_name`, `episode_id`, `staff_id`, `staff_name`, `staff_role`, `notes`, date range, `visit_within_days`, follow-up count range |
+| Follow-ups | `q`, record IDs and names, `action_type`, `status`, `flag`, `unassigned`, `episode_status`, staff roles, due/visit/completed date ranges, `due_within_days`, `days_overdue_min/max`, `completed_within_days`, `preset` |
+
+Patient, staff, episode, and visit searches also accept `flag` and open-follow-up
+filters, and every type has its own sort options. Follow-up presets include
+overdue, due today, due soon, unassigned, open labs/referrals/rechecks, and
+recently completed. `GET /api/options` returns the allowed values, staff list,
+and date bounds for building dropdowns and sliders.
+
+List responses are pages: `{"items": [...], "total": 42, "limit": 50, "offset": 0, "as_of_date": "..."}`.
+`total` counts all matches; `limit` is at most 1,000.
+
+### Create and update records
+
+```bash
+# New patient; the response includes the generated ID (for example P004)
+curl -X POST http://localhost:8000/api/patients \
+  -H 'Content-Type: application/json' -d '{"name": "Sample Patient", "phone": "555-0100"}'
+
+# Change one field; null clears an optional value
+curl -X PATCH http://localhost:8000/api/patients/P001 \
+  -H 'Content-Type: application/json' -d '{"email": null}'
+
+# New visit; its patient is taken from the episode
+curl -X POST http://localhost:8000/api/visits \
+  -H 'Content-Type: application/json' -d '{"episode_id": "E001", "staff_id": "S001", "visit_date": "2026-10-27"}'
+
+# Complete a follow-up and record who did it
+curl -X PATCH http://localhost:8000/api/followups/F001 \
+  -H 'Content-Type: application/json' -d '{"status": "done", "assigned_staff_id": "S002"}'
+```
+
+| Type | Create fields (required in bold) | Update fields |
+|---|---|---|
+| Patients | `patient_id`, **`name`**, `phone`, `email` | `name`, `phone`, `email` |
+| Staff | `staff_id`, **`name`**, **`role`** | `name`, `role` |
+| Episodes | `episode_id`, **`patient_id`**, **`description`**, **`opened_at`**, `closed_at` | `description`, `opened_at`, `closed_at` |
+| Visits | `visit_id`, **`episode_id`**, `staff_id`, **`visit_date`**, `notes` | `staff_id`, `visit_date`, `notes` |
+| Follow-ups | `followup_id`, **`visit_id`**, **`action_type`**, **`due_date`**, `assigned_staff_id` | `action_type`, `due_date`, `assigned_staff_id`, `status` |
+
+Each change runs in one transaction and returns the saved record as the search
+endpoints show it. IDs never change after creation. New follow-ups start `open`;
+`completed_at` is set by the server when `status` becomes `done` and cleared when
+it returns to `open`. Unknown fields, missing references, duplicate IDs, and an
+episode closed before it opened are rejected without saving anything.
+Status-change history is not recorded yet.
+
+### Natural-language questions
+
+```bash
+curl -X POST http://localhost:8000/api/ask \
   -H 'Content-Type: application/json' \
-  -d '{"query":"SELECT patient_id, name FROM patients WHERE name LIKE ? ORDER BY patient_id","parameters":["%Sample%"]}'
+  -d '{"question":"Which doctor had the most rechecks last month?"}'
 ```
 
-Request body:
+The server makes two separate OpenAI calls:
 
-```json
-{
-  "query": "SELECT patient_id, name FROM patients WHERE name LIKE ? ORDER BY patient_id",
-  "parameters": ["%Sample%"],
-  "max_rows": 100
-}
-```
+1. The [Decisions API](https://developers.openai.com/api/docs/guides/decisions)
+   (`gpt-6-luna`) sees only the prompt text and answers two questions in one
+   request: the probability that the prompt asks to change data, and whether it
+   is a `read`, `modify`, or `unrelated` request. It fails closed: a change
+   probability of 0.3 or more, or a refusal, counts as `modify` and returns
+   `modification_not_allowed` before any SQL is generated. Unrelated prompts
+   return `unsupported_question`.
+2. A **SQL model** (Responses API) turns accepted questions into one
+   parameterized `SELECT`, which the server runs with the restricted executor below.
 
-Only `query` is required. `parameters` defaults to an empty list; use a list with
-`?` placeholders, or an object with named placeholders such as `:patient_id`.
-Bind user-entered values instead of concatenating them into SQL. `max_rows`
-defaults to 100 and must be between 1 and 1,000.
+The response includes the decision (`intent`, `confidence`, `modify_probability`),
+generated SQL, bound parameters, a short explanation, and the result (`columns`,
+`rows`, `row_count`, `truncated`).
 
-Example response (illustrative; sample data is not imported automatically):
-
-```json
-{
-  "columns": ["patient_id", "name"],
-  "rows": [["P001", "Sample Patient"]],
-  "row_count": 1,
-  "truncated": false
-}
-```
-
-Row values follow the order of `columns`. This preserves both values even if a
-join returns duplicate column names; use SQL aliases for clearer headings.
-`row_count` counts returned rows, not all possible matches. Empty results retain
-column names and return `rows: []`. `truncated` is true if additional rows were
-omitted because of the row or response-size cap.
-
-Filters, joins, aggregation, sorting, and pagination are expressed in SQL. For
-example, a follow-up query can select patient and staff names across tables:
-
-```sql
-SELECT f.followup_id, p.name AS patient_name, s.name AS assigned_staff_name,
-       f.action_type, f.due_date, f.status
-FROM followups f
-JOIN visits v ON v.visit_id = f.visit_id
-JOIN patients p ON p.patient_id = v.patient_id
-LEFT JOIN staff s ON s.staff_id = f.assigned_staff_id
-WHERE f.status = :status AND f.due_date < :as_of_date
-ORDER BY f.due_date, f.followup_id
-LIMIT :limit OFFSET :offset
-```
-
-Supply parameters such as `{"status":"open","as_of_date":"2026-10-26","limit":25,"offset":0}`.
-The query endpoint returns the selected columns unchanged; it does not add flags
-or rewrite business conditions. Domain rule classes remain available separately
-for future reports and workflow features.
+Neither model is a security boundary. Writes are prevented by the read-only
+connection and SQLite authorizer regardless of what a model produces, and
+`patients.phone` / `patients.email` always read as NULL in generated queries.
+`/api/ask` still exposes any other record to whoever can call it, so
+authentication is required before real data is used.
 
 ### Execution limits and errors
 
 Connections open the database read-only. SQLite authorization allows reads of
-application tables and approved SQL functions, including common aggregates,
-string/date functions, and window functions. Writes, schema changes, transactions,
-`ATTACH`, `PRAGMA`, extension loading, internal/unlisted tables, and multiple
-statements are rejected. The implementation uses SQLite's
-[authorization callback](https://www.sqlite.org/c3ref/set_authorizer.html).
-The full function/table allowlists are in `app/repository.py`.
+application tables and approved SQL functions. Writes, schema changes,
+transactions, `ATTACH`, `PRAGMA`, extension loading, internal/unlisted tables,
+and multiple statements are rejected. The implementation uses SQLite's
+[authorization callback](https://www.sqlite.org/c3ref/set_authorizer.html);
+the allowlists are in `app/repository.py`.
 
-Queries have a cooperative two-second / one-million-VM-step execution budget,
-a 20,000-byte SQL limit, at most 100 result columns, a 1 MB per-value/row limit,
-and a 4 MiB response-row budget. Results must be JSON-compatible text, finite
-numbers, or NULL; use `HEX()` to return binary data as text.
+Generated queries have a cooperative two-second / one-million-VM-step execution
+budget, a 20,000-byte SQL limit, at most 100 result columns, a 1 MB
+per-value/row limit, and a 4 MiB response-row budget.
 
 | HTTP status | Meaning |
 |---|---|
-| 200 | Query completed, including empty results |
-| 422 | Invalid SQL/parameters, disallowed operation, or unsupported result type |
-| 408 | Query exceeded its execution budget |
-| 503 | Database unavailable; check `FOLLOWUP_DB_PATH` and initialize the schema |
+| 200 / 201 | Search, update, or create completed, including empty results |
+| 404 | Requested record not found |
+| 409 | A record with that ID already exists, or a constraint conflict |
+| 422 | Invalid filters or fields, unknown referenced record, rejected prompt, or unusable/disallowed generated SQL |
+| 408 | Generated query exceeded its execution budget |
+| 503 | Database unavailable, or natural-language search not configured/unreachable |
 
-Query execution errors use `detail.code` and `detail.message`; invalid request
-bodies use FastAPI's standard validation-error list. No LLM API key is needed.
-The future AI flow is: fetch schema → produce SQL and bound parameters → call
-`/api/query` → display actual results. Natural-language interpretation and model
-provider calls are not implemented.
+Errors use `detail.code` and `detail.message`; invalid request parameters use
+FastAPI's standard validation-error list. Predefined endpoints need no model API key.
 
 ## 8. Repository layout
 
@@ -377,16 +535,18 @@ visit-follow-up-tracker/
 ├── app/
 │   ├── __init__.py
 │   ├── main.py                 # FastAPI app / route registration
-│   ├── api.py                  # Schema-text and SQL query endpoints
+│   ├── api.py                  # Schema, search, create/update, and /api/ask endpoints
 │   ├── models.py               # Pydantic input/output models
 │   ├── constants.py            # Allowed actions and due-soon window
-│   ├── db.py                   # Read-only connections; PRAGMA foreign_keys=ON
+│   ├── db.py                   # Read-only and writable connections; PRAGMA foreign_keys=ON
 │   ├── schema.sql              # SQLite schema
+│   ├── search.py               # Fixed, parameterized search SQL
+│   ├── writes.py               # Fixed, parameterized INSERT/UPDATE SQL
 │   ├── repository.py           # Restricted read-only SQL execution
 │   ├── service.py              # Validated business operations
 │   ├── rules/                  # FollowUpRule + subclasses
 │   ├── ingestion/              # Loader, validation, synthetic-data helpers
-│   ├── ai/                     # Read-only query interpretation
+│   ├── ai/                     # Decisions API prompt gate and read-only SQL generation
 │   └── templates/              # Minimal web templates (no design spec here)
 ├── data/sample_visits.json     # Synthetic data only
 ├── scripts/
@@ -394,7 +554,7 @@ visit-follow-up-tracker/
 │   └── README.md              # Available and planned operational utilities
 ├── tests/
 │   ├── unit/                  # Schema initialization tests
-│   └── integration/           # Startup and search API tests against temporary SQLite
+│   └── integration/           # Search, query, and ask API tests against temporary SQLite
 ├── presentation/              # Reserved for the team presentation
 ├── .github/workflows/ci.yml
 ├── Dockerfile
@@ -431,7 +591,7 @@ runtime and development dependencies from `uv.lock`. Commit `pyproject.toml` and
 requirements files are retained for the existing pip-based Docker/CI setup and
 must be kept consistent with the dependency ranges in `pyproject.toml`.
 
-Once the server is running, try schema discovery and SQL queries in section 7 or use
+Once the server is running, try the searches in section 7 or use
 `/docs`. A newly initialized database returns empty results until synthetic
 records are inserted; this change does not implement the data importer.
 
@@ -456,7 +616,9 @@ Environment variables:
 | Name | Example | Purpose |
 |---|---|---|
 | `FOLLOWUP_DB_PATH` | `./data/followups.db` | SQLite database path |
-| `LLM_API_KEY` | *(unset by default)* | Optional model API credential; never commit |
+| `OPENAI_API_KEY` | *(unset by default)* | Enables `/api/ask`; never commit |
+| `OPENAI_MODELS` | `gpt-6.1-sol` | Comma-separated models the key can use; the first writes SQL |
+| `OPENAI_SQL_MODEL` | *(optional)* | Overrides the SQL model; prompt checks always use `gpt-6-luna` |
 
 Do not commit `.env`, the working SQLite database, backups, or any credentials.
 
@@ -470,11 +632,14 @@ python -m pip install -r requirements-dev.txt
 python -m pytest -q
 ```
 
-Current tests check startup, schema initialization/discovery, queries across all
-application tables, joins, aggregates, bound parameters, SQL pagination, response
-limits, rejected writes, and execution budgets. They use temporary synthetic
-databases and make no external LLM calls. The full import/report/update/history
-workflow below remains planned.
+Current tests check startup, schema initialization/discovery, search filters,
+presets, sorting, paging, counts, and detail views for every record type; create
+and update for every record type, including generated IDs, partial updates,
+follow-up completion, reference checks, and rollback; the restricted SQL runner
+(joins, aggregates, bound parameters, response limits, rejected writes, execution
+budgets, hidden contact columns); and the `/api/ask` decision gate. They use
+temporary synthetic databases and a fake assistant, so they make no external LLM
+calls. The bulk import/report/history workflow below remains planned.
 
 **Unit tests:** valid/invalid input, unknown action type, invalid date, overdue boundary, due-today behavior, due-soon window, unassigned and multi-flag cases, no-flags report, database foreign keys, and updates.
 

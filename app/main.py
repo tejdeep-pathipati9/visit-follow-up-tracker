@@ -1,4 +1,4 @@
-"""Application entry point and read-only SQL query API."""
+"""Application entry point, read-only search API, and natural-language questions."""
 
 import logging
 from pathlib import Path
@@ -22,6 +22,12 @@ def query_error(request: Request, error: QueryError) -> JSONResponse:
         status_code=error.status_code,
         content={"detail": {"code": error.code, "message": str(error)}},
     )
+
+
+@app.exception_handler(sqlite3.IntegrityError)
+def integrity_error(request: Request, error: sqlite3.IntegrityError) -> JSONResponse:
+    # Services check references first; this covers races and constraints they do not check.
+    return JSONResponse(status_code=409, content={"detail": {"code": "conflict", "message": str(error)}})
 
 
 @app.exception_handler(sqlite3.Error)
