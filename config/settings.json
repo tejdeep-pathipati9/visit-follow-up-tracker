@@ -1,0 +1,4 @@
+{
+  "allowed_action_types": ["lab", "referral", "recheck"],
+  "due_soon_days": 7
+}
