@@ -1,1 +1,1 @@
-"""TODO: Synthetic input loading, validation, and rejection summaries."""
+"""Synthetic input loading, validation, and settings; see models.py and settings.py."""
