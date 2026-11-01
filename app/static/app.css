@@ -66,8 +66,12 @@ input[type="checkbox"], input[type="range"] { width: auto; }
 .sign-in { display: grid; place-items: center; padding: 64px 24px; }
 .sign-in form { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 24px; width: min(420px, 100%); display: grid; gap: 10px; }
 .sign-in h2 { font-size: 18px; }
-.import-dialog { border: 1px solid var(--line); border-radius: 8px; padding: 20px; width: min(760px, 92vw); }
-.import-dialog::backdrop { background: rgba(15, 23, 42, .35); }
+.import-dialog, .close-dialog { border: 1px solid var(--line); border-radius: 8px; padding: 20px; width: min(760px, 92vw); }
+.import-dialog::backdrop, .close-dialog::backdrop { background: rgba(15, 23, 42, .35); }
+.close-dialog { width: min(520px, 92vw); }
+.close-dialog h2 { font-size: 18px; margin: 0; }
+.close-dialog label { display: block; font-weight: 600; margin: 14px 0 4px; }
+.close-dialog .chips { margin-top: 8px; }
 .import-dialog .table-wrap { max-height: 50vh; margin-top: 8px; }
 
 .dashboard {

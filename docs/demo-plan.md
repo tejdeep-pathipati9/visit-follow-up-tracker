@@ -41,7 +41,7 @@ Do this the day before, rehearse once, reset, and do it again 30 minutes before.
 | 4 | **Follow-ups** tab; move **As of** a week ahead, then back | Flags follow the clinic's windows: lab 3 days, referral and recheck 14. | More follow-ups turn overdue a week ahead |
 | 5 | **Printable report**, then **Print** | What the manager prints. | Follow-ups grouped by flag; the print preview has no buttons |
 | 6 | Sign out; sign in as `birch.sample@clinic.example.test` | A nurse sees only her own follow-ups. | Smaller counts; every row is assigned to her |
-| 7 | On an overdue row, set **Status** to **Closed**, reason "Patient unreachable after three calls"; open the row | Closing needs a reason, and every change is kept. | The history shows the change, her name, the time, and the reason |
+| 7 | On an overdue row, set **Status** to **Closed**, pick "Patient unreachable after three calls", and **Close follow-up**; open the row | Closing needs a reason, and every change is kept. | The history shows the change, her name, the time, and the reason |
 | 8 | **Ask** tab: "How many of my follow-ups are overdue, by action type?"; then click "Mark F001 as done" | Questions read her rows only; they cannot change anything. | The counts add up to her Overdue tile; the second request is refused |
 | 9 | Terminal: `docker compose exec app python scripts/backup_db.py --output /data/backups` | Backups are checked, not just copied. | "integrity_check ok, test restore matched" |
 | 10 | Terminal: `docker compose up -d --force-recreate`; refresh; sign in as the manager; open the closed follow-up | The container is replaced; the data volume stays. | The follow-up is still closed, with its history |

@@ -325,9 +325,24 @@ function statusButton(item) {
 }
 
 // Closing means the follow-up could not be completed, so the clinic records why.
+const CLOSING_REASONS = ["Patient unreachable after three calls", "Patient did not return", "No results received"];
+
 function askClosingReason(followupId) {
-  const reason = window.prompt(`Why is ${followupId} being closed? (for example: patient unreachable, did not return)`);
-  return reason && reason.trim() ? reason.trim() : null;
+  const dialog = $("close-dialog");
+  const reason = $("close-reason");
+  $("close-title").textContent = `Close ${followupId}`;
+  reason.value = "";
+  $("close-examples").replaceChildren(...CLOSING_REASONS.map((text) => h("button", {
+    type: "button", onclick: () => { reason.value = text; reason.focus(); },
+  }, text)));
+  $("close-cancel").onclick = () => dialog.close();
+  dialog.returnValue = "";
+  dialog.showModal();
+  reason.focus();
+  // Resolves with the reason, or null when cancelled (Cancel, Escape).
+  return new Promise((resolve) => {
+    dialog.onclose = () => resolve(dialog.returnValue === "close" && reason.value.trim() ? reason.value.trim() : null);
+  });
 }
 
 function statusSelect(item) {
@@ -335,10 +350,10 @@ function statusSelect(item) {
     class: `status-select ${item.status}`,
     "aria-label": `Status of ${item.followup_id}`,
     onclick: (event) => event.stopPropagation(),
-    onchange: (event) => {
+    onchange: async (event) => {
       const status = event.target.value;
       if (status !== "closed") return setFollowupStatus(item.followup_id, status);
-      const reason = askClosingReason(item.followup_id);
+      const reason = await askClosingReason(item.followup_id);
       if (reason) return setFollowupStatus(item.followup_id, status, reason);
       event.target.value = item.status;  // no reason given: nothing changes
     },

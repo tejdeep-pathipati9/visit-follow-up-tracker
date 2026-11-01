@@ -34,6 +34,8 @@
   referral and recheck 14 days) everywhere: flags, the `due_soon` filter and preset,
   dashboard and summary counts, and `/api/ask`. `GET /api/options` returns
   `due_soon_days_by_action` instead of `due_soon_days`.
+- Choosing Closed in a follow-up row opens a dialog that asks for the reason, with the
+  clinic's usual reasons to pick from; it replaces the browser's prompt.
 - The Ask tab shows the answer and its rows, not the SQL; `/api/ask` still returns the SQL
   and its parameters.
 - Removed the public `POST /api/query` endpoint; callers can no longer send SQL.

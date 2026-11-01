@@ -106,6 +106,20 @@
       <form method="dialog" class="form-actions"><button class="primary">Close</button></form>
     </dialog>
 
+    <dialog id="close-dialog" class="close-dialog" aria-labelledby="close-title">
+      <form method="dialog">
+        <h2 id="close-title">Close follow-up</h2>
+        <p class="muted">Closing means it could not be done. The reason is kept in its history.</p>
+        <label for="close-reason">Reason</label>
+        <textarea id="close-reason" rows="3" maxlength="500" required></textarea>
+        <div id="close-examples" class="chips"></div>
+        <div class="form-actions">
+          <button type="button" id="close-cancel">Cancel</button>
+          <button class="primary" value="close">Close follow-up</button>
+        </div>
+      </form>
+    </dialog>
+
     <div id="toast" class="toast" role="status" hidden></div>
 
     <script src="{{ url_for('static', path='app.js') }}" defer></script>
