@@ -7,7 +7,7 @@
 <style>
   :root {
     --ink: #13263f; --muted: #5b6676; --line: #d9dee5; --soft: #f4f6f9;
-    --brand: #3388c8; --accent: #1f6fae; --accent-soft: #e8f2fa; --sky: #7cc0f0;
+    --brand: #3388c8; --accent: #1f6fae; --accent-soft: #e8f2fa;
     --red: #c0392b; --red-soft: #fbe7e4; --amber: #b26a00; --amber-soft: #fdf1dc;
     --gray: #5b6676; --gray-soft: #eceff3;
     --mark: #e53935;
@@ -40,11 +40,6 @@
   .cover .title { font-size: 56px; font-weight: 700; letter-spacing: -.02em; line-height: 1.05; margin: 0 0 18px; }
   .cover .subtitle { font-size: 22px; color: #b9d6ee; }
   .cover .meta { display: flex; justify-content: space-between; align-items: flex-end; font-size: 15px; color: #b9d6ee; border-top: 1px solid rgba(255, 255, 255, .18); padding-top: 18px; }
-  .slide.dark { background: var(--ink); color: #fff; }
-  .dark .eyebrow { color: var(--sky); }
-  .dark h1 em { color: var(--sky); }
-  .dark .footer { color: #8fa6bd; border-top-color: rgba(255, 255, 255, .15); }
-  .dark .footer .flogo { background-image: url(assets/logo-white.png); }
   .demo { list-style: none; counter-reset: step; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 14px; }
   .demo li { counter-increment: step; display: grid; grid-template-columns: 34px 1fr; gap: 16px; align-items: center; font-size: 21px; color: #dbe9f6; }
   .demo li::before { content: counter(step); width: 34px; height: 34px; border-radius: 50%; background: var(--brand); color: #fff; font-size: 16px; font-weight: 800; display: grid; place-items: center; }
@@ -59,14 +54,15 @@
   .cap b { display: block; font-size: 18px; margin-bottom: 2px; }
   .cap span { font-size: 15px; color: var(--muted); line-height: 1.4; }
 
-  /* By the numbers */
-  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 28px; }
-  .stat { border-top: 2px solid var(--brand); padding-top: 18px; }
-  .stat .big { font-size: 56px; font-weight: 800; letter-spacing: -.02em; line-height: 1; color: var(--sky); }
-  .stat b { display: block; font-size: 18px; margin: 14px 0 6px; }
-  .stat span { font-size: 14.5px; color: #b9cde0; line-height: 1.45; }
-  .dark .footnote { color: #8fa6bd; margin-top: 40px; }
-  .dark code { background: rgba(255, 255, 255, .12); color: #fff; }
+  /* How each promise is checked */
+  .proof { display: flex; flex-direction: column; }
+  .proof-row { display: grid; grid-template-columns: 30px 290px 1fr 120px; gap: 18px; align-items: center; padding: 15px 0; border-top: 1px solid var(--line); }
+  .proof-row:last-child { border-bottom: 1px solid var(--line); }
+  .proof-row.head { padding: 0 0 8px; border-top: 0; font-size: 12px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+  .proof-row b { font-size: 17px; }
+  .proof-row span { font-size: 14.5px; color: var(--muted); line-height: 1.4; }
+  .proof-row .live { justify-self: end; font-size: 13px; font-weight: 700; color: var(--accent); background: var(--accent-soft); border-radius: 999px; padding: 5px 12px; white-space: nowrap; }
+  .proof-note { margin-top: 18px; font-size: 14px; color: var(--muted); }
 
   /* When a follow-up is flagged: a timeline, and a dashed box for "no date yet" */
   .pill { border-radius: 999px; padding: 6px 12px; font-size: 14px; font-weight: 700; text-align: center; }
@@ -182,21 +178,6 @@
         <div class="cap"><svg class="ic"><use href="#i-printer"/></svg><div><b>Prints the report</b><span>And downloads any list as a CSV</span></div></div>
       </div>
     </div>
-  </section>
-
-  <section class="slide dark">
-    <div class="eyebrow">By the numbers</div>
-    <h1>Built for <em>ten years</em> of the clinic's records</h1>
-    <div class="body">
-      <div class="stats">
-        <div class="stat"><div class="big">120,000</div><b>visits handled</b><span>Ten years at the clinic's volume: imported and checked in under 10 seconds; lists open in about a second.</span></div>
-        <div class="stat"><div class="big">0</div><b>records saved from a bad file</b><span>One bad record refuses the whole file, with every problem listed.</span></div>
-        <div class="stat"><div class="big">565</div><b>automated tests</b><span>Run on every pull request.</span></div>
-        <div class="stat"><div class="big">1</div><b>command to start</b><span><code>docker compose up</code>; the data lives on its own volume and outlasts the container.</span></div>
-      </div>
-      <p class="footnote">Measured on a laptop with synthetic data: 120,000 visits and 240,064 follow-ups, all within four months, which is harder than real records.</p>
-    </div>
-    <div class="footer"><div class="flogo"></div><span>Visit Follow-Up Tracker</span><span class="pg"></span></div>
   </section>
 
   <section class="slide">
@@ -403,6 +384,23 @@
         <div class="step"><svg class="ic sm"><use href="#i-shield"/></svg><div><b>Verified backups</b><span><code>Connection.backup</code>, <code>integrity_check</code>, and a test restore.</span></div></div>
         <div class="step"><svg class="ic sm"><use href="#i-calendar"/></svg><div><b>10-year retention</b><span>Old visits and their history are deleted; <code>--dry-run</code> shows the counts first.</span></div></div>
       </div>
+    </div>
+    <div class="footer"><div class="flogo"></div><span>Visit Follow-Up Tracker</span><span class="pg"></span></div>
+  </section>
+
+  <section class="slide">
+    <div class="eyebrow">How we know it works</div>
+    <h1>Every promise is <em>checked, not assumed</em></h1>
+    <div class="body">
+      <div class="proof">
+        <div class="proof-row head"><span></span><span>Promise</span><span>How we checked it</span><span style="justify-self:end">See it live</span></div>
+        <div class="proof-row"><svg class="ic"><use href="#i-file-x"/></svg><b>A bad file never half-saves</b><span>A file with deliberate bad records saves nothing, and a save that fails midway leaves nothing behind.</span><span class="live">Demo step 1</span></div>
+        <div class="proof-row"><svg class="ic"><use href="#i-lock"/></svg><b>Staff never see others' work</b><span>Signed in as one staff member, tests try other people's records, downloads, the report, and questions that read the tables directly.</span><span class="live">Demo step 3</span></div>
+        <div class="proof-row"><svg class="ic"><use href="#i-history"/></svg><b>Every change is traceable</b><span>A change and its history row are saved together or not at all, with who made it and their note.</span><span class="live">Demo step 3</span></div>
+        <div class="proof-row"><svg class="ic"><use href="#i-shield"/></svg><b>Questions never change records</b><span>Even if the model writes an UPDATE or DELETE, the read-only connection refuses it.</span><span class="live">Demo step 4</span></div>
+        <div class="proof-row"><svg class="ic"><use href="#i-db"/></svg><b>The data outlasts the container</b><span>Backups are integrity-checked and test-restored; replacing the container keeps the volume.</span><span class="live">Demo step 5</span></div>
+      </div>
+      <p class="proof-note">The automated checks run on every pull request; the demo shows the same things live.</p>
     </div>
     <div class="footer"><div class="flogo"></div><span>Visit Follow-Up Tracker</span><span class="pg"></span></div>
   </section>
