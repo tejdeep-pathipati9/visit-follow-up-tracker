@@ -15,6 +15,7 @@ RUN groupadd --system tracker \
     && chown tracker:tracker /data
 
 COPY app/ ./app/
+COPY config/ ./config/
 COPY data/sample_visits.json ./data/sample_visits.json
 COPY scripts/table_generate.py ./scripts/table_generate.py
 
