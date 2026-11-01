@@ -21,10 +21,10 @@
   .slide { position: absolute; inset: 0; background: #fff; padding: 44px 64px 76px; display: none; flex-direction: column; overflow: hidden; box-shadow: 0 10px 40px rgba(0, 0, 0, .35); }
   .slide.active { display: flex; animation: enter .35s ease-out; }
   @keyframes enter { from { opacity: 0; } to { opacity: 1; } }
-  /* Feature slides build up: each red circle with its note, then the takeaway (see the script). */
+  /* Feature slides build up: each red circle with its note (see the script). */
   .build { opacity: 0; transition: opacity .3s ease, transform .3s ease; }
   .mark.build { transform: scale(1.15); }
-  .notes li.build, .takeaway.build { transform: translateY(6px); }
+  .notes li.build { transform: translateY(6px); }
   .slide .build.shown { opacity: 1; transform: none; }
   .eyebrow { font-size: 13px; letter-spacing: .12em; text-transform: uppercase; color: var(--accent); font-weight: 700; margin-bottom: 8px; }
   h1 { font-size: 34px; font-weight: 700; margin: 0 0 22px; letter-spacing: -.01em; }
@@ -86,7 +86,6 @@
   .notes li .n { width: 26px; height: 26px; border-radius: 50%; background: var(--mark); color: #fff; font-size: 14px; font-weight: 800; display: grid; place-items: center; }
   .notes b { display: block; font-size: 17px; margin-bottom: 4px; }
   .notes li span { font-size: 14.5px; color: var(--muted); line-height: 1.4; }
-  .takeaway { margin-top: 24px; background: var(--ink); color: #fff; border-radius: 6px; padding: 14px 16px; font-size: 15px; font-weight: 600; line-height: 1.4; }
   .footnote { margin-top: 18px; font-size: 13px; color: var(--muted); line-height: 1.5; }
 
   /* Running it: three versions in turn over one store of records */
@@ -224,7 +223,6 @@
           <li><span class="n">1</span><div><b>Nothing is saved</b><span>The clinic asked for all or nothing, so the database stays as it was.</span></div></li>
           <li><span class="n">2</span><div><b>Every problem, with its reason</b><span>Missing fields, bad dates, unknown action types, and missing patients, each named so the file can be fixed.</span></div></li>
         </ol>
-        <div class="takeaway">The records never hold half a file.</div>
       </div>
     </div>
     <div class="footer"><div class="flogo"></div><span>Visit Follow-Up Tracker</span><span class="pg"></span></div>
@@ -246,7 +244,6 @@
           <li><span class="n">2</span><div><b>One flag per follow-up</b><span>Overdue the day after its date; due soon inside its window; unassigned when no date is set.</span></div></li>
           <li><span class="n">3</span><div><b>Change it in place</b><span>Choosing Closed asks for the reason.</span></div></li>
         </ol>
-        <div class="takeaway">The windows are the clinic's: lab 3 days, referral and recheck 14.</div>
       </div>
     </div>
     <div class="footer"><div class="flogo"></div><span>Visit Follow-Up Tracker</span><span class="pg"></span></div>
@@ -266,7 +263,6 @@
           <li><span class="n">1</span><div><b>Closed, with the reason</b><span>“Patient unreachable after three calls.”</span></div></li>
           <li><span class="n">2</span><div><b>Reschedule, hand-off, close</b><span>Each row has the time, the person, and their note.</span></div></li>
         </ol>
-        <div class="takeaway">Any reschedule, hand-off, or closure can be traced to a person.</div>
       </div>
     </div>
     <div class="footer"><div class="flogo"></div><span>Visit Follow-Up Tracker</span><span class="pg"></span></div>
@@ -288,7 +284,6 @@
           <li><span class="n">2</span><div><b>Her numbers only</b><span>Counts cover only the follow-ups assigned to her.</span></div></li>
           <li><span class="n">3</span><div><b>Her rows only</b><span>Lists, CSV files, the report, and her questions use the same rule.</span></div></li>
         </ol>
-        <div class="takeaway">Managers see everyone; other staff see only their own.</div>
       </div>
     </div>
     <div class="footer"><div class="flogo"></div><span>Visit Follow-Up Tracker</span><span class="pg"></span></div>
@@ -310,8 +305,7 @@
           <li><span class="n">2</span><div><b>A plain answer</b><span>One sentence, then the rows: lab 5, recheck 3, referral 2.</span></div></li>
           <li><span class="n">3</span><div><b>Matches the screen</b><span>5 + 3 + 2 = 10, her overdue count.</span></div></li>
         </ol>
-        <div class="takeaway">Questions only: “Mark F001 as done” is refused.</div>
-        <p class="footnote">The AI model sees the question, the table layout, and the asker's staff ID, never patient records.</p>
+        <p class="footnote">Questions cannot change records: “Mark F001 as done” is refused. The AI model sees the question, the table layout, and the asker's staff ID, never patient records.</p>
       </div>
     </div>
     <div class="footer"><div class="flogo"></div><span>Visit Follow-Up Tracker</span><span class="pg"></span></div>
@@ -331,7 +325,6 @@
           <li><span class="n">1</span><div><b>Totals by flag</b><span>What needs attention today.</span></div></li>
           <li><span class="n">2</span><div><b>Grouped by flag</b><span>Patient ID, action, scheduled date, days late, and staff. Printing hides the buttons.</span></div></li>
         </ol>
-        <div class="takeaway">Any list also downloads as a CSV for a spreadsheet.</div>
       </div>
     </div>
     <div class="footer"><div class="flogo"></div><span>Visit Follow-Up Tracker</span><span class="pg"></span></div>
@@ -380,12 +373,10 @@
   // goes back. F or double-click for full screen; printing gives a PDF with everything shown.
   const slides = [...document.querySelectorAll(".slide")];
   const deck = document.getElementById("deck");
-  // Each slide's steps: every red circle with its note, then the takeaway and footnote.
+  // Each slide's steps: every red circle with its note.
   const steps = slides.map((slide) => {
     const notes = [...slide.querySelectorAll(".notes li")];
     const list = [...slide.querySelectorAll(".mark")].map((mark, i) => [mark, notes[i]].filter(Boolean));
-    const closing = [...slide.querySelectorAll(".takeaway, .notes .footnote")];
-    if (closing.length) list.push(closing);
     list.flat().forEach((element) => element.classList.add("build"));
     return list;
   });
