@@ -577,6 +577,7 @@ visit-follow-up-tracker/
 ├── data/sample_visits.json     # Synthetic data only
 ├── scripts/
 │   ├── table_generate.py      # Initialize core SQLite tables and indexes
+│   ├── generate_synthetic_data.py  # Reproducible clean and bad-row synthetic files
 │   └── README.md              # Available and planned operational utilities
 ├── tests/
 │   ├── unit/                  # Schema initialization tests
@@ -628,10 +629,18 @@ exported `FOLLOWUP_DB_PATH` (the script does not load `.env`). Schema creation i
 atomic; it does not migrate existing tables or create the optional status history
 table. Foreign keys must still be enabled for every future database connection.
 
-The following commands remain **planned** until the operational scripts exist:
+`generate_synthetic_data.py` writes reproducible synthetic data to `data/generated/`
+(ignored by Git): `clean_visits.json` and `visits_with_bad_rows.json`. The same
+`--seed` and `--as-of` date always give identical files; `--as-of` is required.
+It uses only the Python standard library.
 
 ```bash
-python scripts/generate_synthetic_data.py
+python scripts/generate_synthetic_data.py --as-of 2026-10-30 --seed 42 --visits 40
+```
+
+The following command remains **planned** until the import script exists:
+
+```bash
 python scripts/import_data.py --file data/sample_visits.json
 ```
 
