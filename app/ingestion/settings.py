@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from app.constants import ActionType
 
@@ -20,7 +20,8 @@ class Settings(BaseModel):
 
     # Limited to the action types the database accepts (see CHECK in schema.sql).
     allowed_action_types: list[ActionType] = Field(min_length=1)
-    due_soon_days: Annotated[int, Field(ge=0, le=365)]
+    # How many days ahead counts as "due soon", for each allowed action type.
+    due_soon_days_by_action: dict[ActionType, Annotated[int, Field(ge=0, le=365)]]
 
     @field_validator("allowed_action_types")
     @classmethod
@@ -28,6 +29,17 @@ class Settings(BaseModel):
         if len(set(value)) != len(value):
             raise ValueError("action types must not repeat")
         return value
+
+
+    @model_validator(mode="after")
+    def every_action_type_has_a_window(self) -> "Settings":
+        for action_type in self.allowed_action_types:
+            if action_type not in self.due_soon_days_by_action:
+                raise ValueError(f"no due-soon window for {action_type}")
+        for action_type in self.due_soon_days_by_action:
+            if action_type not in self.allowed_action_types:
+                raise ValueError(f"{action_type} is not an allowed action type")
+        return self
 
 
 def load_settings(path: str | Path = DEFAULT_SETTINGS_PATH) -> Settings:
@@ -52,7 +64,9 @@ def load_settings(path: str | Path = DEFAULT_SETTINGS_PATH) -> Settings:
         return Settings.model_validate(data)
     except ValidationError as error:
         problems = "; ".join(
-            f"{'.'.join(str(part) for part in problem['loc'])}: {problem['msg'].removeprefix('Value error, ')}"
+            ": ".join(filter(None, (
+                ".".join(str(part) for part in problem["loc"]), problem["msg"].removeprefix("Value error, "),
+            )))
             for problem in error.errors()
         )
         raise SettingsError(f"Invalid settings in {path}: {problems}") from None
