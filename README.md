@@ -47,7 +47,7 @@ Assignments for the new web/LLM work are **proposed** and should be agreed on by
 | Date storage | ISO 8601 text (`YYYY-MM-DD`); UTC timestamps for events | Sortable strings in SQLite; dates validated in Python |
 | Rule execution | Deterministic Python classes, **not** the LLM | Predictable results and easy unit testing |
 | Current date | Inject `as_of_date` into rule evaluation | Repeatable tests; normally defaults to today's date |
-| Rule defaults | Constants in `app/constants.py` | Keeps the small set of domain defaults in application code |
+| Rule settings | JSON file `config/settings.json` (allowed action types and a due-soon window per action type) | The clinic can change a window without editing code |
 | LLM role | A decision model rejects prompts that ask to change data; a second model writes **read-only** SQL | The SQLite authorizer, not the model, enforces read-only access and execution limits |
 | Write operations | Predefined create/update endpoints with fixed SQL; no deletes; never through the LLM | Changes are explicit staff actions; records are preserved |
 | Deployment | Docker, with SQLite on a named volume | Data persists across container replacement |
@@ -325,16 +325,19 @@ The importer reads one JSON file containing synthetic patients, staff, episodes,
 
 **Import behavior:** validate records first, summarize rejections, then insert the accepted batch in **one SQLite transaction**. If a database write fails, roll back that batch (no partial saved batch). Import parents before children: patients/staff → episodes → visits → follow-ups. A repeat import must not silently create duplicates.
 
-Rule defaults in `app/constants.py`:
+Rule settings live in `config/settings.json`:
 
-```python
-ALLOWED_ACTION_TYPES = ("lab", "referral", "recheck")
-DUE_SOON_DAYS = 7
+```json
+{
+  "allowed_action_types": ["lab", "referral", "recheck"],
+  "due_soon_days_by_action": {"lab": 7, "referral": 14, "recheck": 14}
+}
 ```
 
-The rule engine will use these constants directly; no separate settings file is
-needed. Allowed action types must stay consistent with the database's `CHECK`
-constraint (or the schema must be updated in a controlled migration).
+- `allowed_action_types` must be non-empty, without repeats, and limited to the types the database's `CHECK` constraint accepts (or the schema must be updated in a controlled migration).
+- `due_soon_days_by_action` needs a window of 0 to 365 days for every allowed action type, and none for a type that is not allowed.
+- Unknown keys are rejected. A missing file, invalid JSON, or invalid values raise a `SettingsError` that names the file and the problem.
+- `app/constants.py` keeps the same defaults for code that does not read the settings file.
 
 ## 6. Follow-up rules
 
@@ -343,10 +346,10 @@ The rule engine is implemented with a base `FollowUpRule` class and one subclass
 | Rule | Definition, relative to `as_of_date` |
 |---|---|
 | `overdue` | `status = open` and `due_date < as_of_date` |
-| `due_soon` | `status = open` and `as_of_date <= due_date <= as_of_date + due_soon_days` |
+| `due_soon` | `status = open` and `as_of_date <= due_date <= as_of_date + window`, where the window depends on the action type (`due_soon_days_by_action`: lab 7, referral 14, recheck 14) |
 | `unassigned` | `status = open` and `assigned_staff_id IS NULL` |
 
-**Due today counts as due soon, not overdue.** A completed follow-up is not shown as currently overdue even if its due date is in the past. Rules only **flag** records; they never auto-change statuses or decide clinical care.
+**Due today counts as due soon, not overdue.** A closed follow-up is never flagged, even if its due date is in the past. Rules only **flag** records; they never auto-change statuses or decide clinical care.
 
 **Planned 1.1.0 rule:** `due_before_visit`—flag an open follow-up whose due date is earlier than its source visit date. This is a business-rule warning, not a malformed-date parsing error. The team should confirm this specific choice before implementation.
 
@@ -570,6 +573,7 @@ visit-follow-up-tracker/
 │   ├── ai/                     # Decisions API prompt gate and read-only SQL generation
 │   ├── templates/index.html    # Web UI page shell
 │   └── static/                 # Web UI script and styles (no build step)
+├── config/settings.json        # Allowed action types and due-soon windows
 ├── data/sample_visits.json     # Synthetic data only
 ├── scripts/
 │   ├── table_generate.py      # Initialize core SQLite tables and indexes
