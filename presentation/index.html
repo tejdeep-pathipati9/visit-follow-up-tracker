@@ -47,13 +47,16 @@
   .cover .subtitle { font-size: 22px; color: #b9d6ee; }
   .cover .meta { display: flex; justify-content: space-between; align-items: flex-end; font-size: 15px; color: #b9d6ee; border-top: 1px solid rgba(255, 255, 255, .18); padding-top: 18px; }
 
-  /* Agenda */
-  .agenda { list-style: none; counter-reset: item; margin: 0; padding: 0; max-width: 820px; }
-  .agenda li { counter-increment: item; display: grid; grid-template-columns: 56px 1fr; align-items: baseline; padding: 15px 0; border-top: 1px solid var(--line); }
-  .agenda li:last-child { border-bottom: 1px solid var(--line); }
-  .agenda li::before { content: counter(item); font-size: 22px; font-weight: 800; color: var(--brand); }
-  .agenda b { font-size: 21px; }
-  .agenda span { display: block; margin-top: 4px; font-size: 15px; color: var(--muted); }
+  /* Agenda: the talk as a numbered line across the slide; the two feature groups are wider */
+  .agenda { display: grid; grid-template-columns: 1fr 1fr 1.3fr 1.3fr 1fr 1fr; gap: 20px; }
+  .ag { position: relative; display: flex; flex-direction: column; gap: 9px; }
+  .ag:not(:last-child)::after { content: ""; position: absolute; top: 25px; left: 52px; right: -20px; height: 2px; background: var(--line); }
+  .ag .n { width: 52px; height: 52px; border-radius: 50%; background: #fff; border: 2px solid var(--brand); color: var(--brand); font-size: 20px; font-weight: 800; display: grid; place-items: center; margin-bottom: 12px; }
+  .ag.group .n { background: var(--brand); color: #fff; }
+  .ag b { font-size: 21px; line-height: 1.25; }
+  .ag > span { font-size: 15px; color: var(--muted); line-height: 1.4; }
+  .ag .chips { display: flex; flex-direction: column; align-items: flex-start; gap: 7px; margin-top: 4px; }
+  .ag .chips span { background: var(--accent-soft); color: var(--accent); border-radius: 999px; padding: 5px 13px; font-size: 15px; font-weight: 600; }
 
   /* What we built: the product on a blue panel that runs off the slide */
   .hero .copy { width: 520px; flex: 1; display: flex; flex-direction: column; justify-content: center; position: relative; z-index: 1; }
@@ -168,14 +171,14 @@
     <div class="eyebrow">Agenda</div>
     <h1>What we will show</h1>
     <div class="body">
-      <ol class="agenda">
-        <li><div><b>What we built</b></div></li>
-        <li><div><b>The clinic's answers</b><span>How they shaped the rules</span></div></li>
-        <li><div><b>The tracker, feature by feature</b><span>Import · Flags · History · Access · Plain-English questions · Report</span></div></li>
-        <li><div><b>Running it</b><span>Updates, backups, and keeping records for 10 years</span></div></li>
-        <li><div><b>Live demo</b></div></li>
-        <li><div><b>Questions</b></div></li>
-      </ol>
+      <div class="agenda">
+        <div class="ag"><div class="n">1</div><b>What we built</b><span>The tracker at a glance</span></div>
+        <div class="ag"><div class="n">2</div><b>The clinic's requirements</b><span>When a follow-up is flagged, and the rules it follows</span></div>
+        <div class="ag group"><div class="n">3</div><b>Tracking follow-ups</b><div class="chips"><span>Import</span><span>Flags</span><span>History</span></div></div>
+        <div class="ag group"><div class="n">4</div><b>Seeing and sharing</b><div class="chips"><span>Access</span><span>Plain-English questions</span><span>Report</span></div></div>
+        <div class="ag"><div class="n">5</div><b>Running it</b><span>Updates, backups, and keeping records for 10 years</span></div>
+        <div class="ag"><div class="n">6</div><b>Live demo</b><span>Then questions</span></div>
+      </div>
     </div>
     <div class="footer"><div class="flogo"></div><span>Visit Follow-Up Tracker</span><span class="pg"></span></div>
   </section>
@@ -197,8 +200,8 @@
   </section>
 
   <section class="slide">
-    <div class="eyebrow">What the clinic told us</div>
-    <h1>Built on <em>the clinic's answers</em></h1>
+    <div class="eyebrow">The clinic's requirements</div>
+    <h1>Built to <em>the clinic's requirements</em></h1>
     <div class="body">
       <div class="flagging">
         <svg class="tl" viewBox="0 0 842 126" role="img" aria-label="An open follow-up is due soon in the days before its scheduled date, including the date, and overdue from the day after">
@@ -234,7 +237,7 @@
   </section>
 
   <section class="slide">
-    <div class="eyebrow">Import</div>
+    <div class="eyebrow">Tracking follow-ups · Import</div>
     <h1>A file with one bad record is <em>refused whole</em></h1>
     <div class="feature">
       <div class="shot">
@@ -253,7 +256,7 @@
   </section>
 
   <section class="slide">
-    <div class="eyebrow">Flags</div>
+    <div class="eyebrow">Tracking follow-ups · Flags</div>
     <h1>Flags show <em>what is slipping</em></h1>
     <div class="feature">
       <div class="shot">
@@ -274,7 +277,7 @@
   </section>
 
   <section class="slide">
-    <div class="eyebrow">History</div>
+    <div class="eyebrow">Tracking follow-ups · History</div>
     <h1>Every change is kept, <em>with who made it</em></h1>
     <div class="feature">
       <div class="shot">
@@ -293,7 +296,7 @@
   </section>
 
   <section class="slide">
-    <div class="eyebrow">Access</div>
+    <div class="eyebrow">Seeing and sharing · Access</div>
     <h1>Each person sees <em>their own follow-ups</em></h1>
     <div class="feature">
       <div class="shot">
@@ -314,7 +317,7 @@
   </section>
 
   <section class="slide">
-    <div class="eyebrow">Plain-English questions</div>
+    <div class="eyebrow">Seeing and sharing · Plain-English questions</div>
     <h1>Anyone can ask; <em>each gets their own answer</em></h1>
     <div class="feature">
       <div class="shot">
@@ -336,7 +339,7 @@
   </section>
 
   <section class="slide">
-    <div class="eyebrow">Report</div>
+    <div class="eyebrow">Seeing and sharing · Report</div>
     <h1>A report the manager <em>can print</em></h1>
     <div class="feature">
       <div class="shot">
@@ -397,10 +400,11 @@
   // goes back. F or double-click for full screen; printing gives a PDF with everything shown.
   const slides = [...document.querySelectorAll(".slide")];
   const deck = document.getElementById("deck");
-  // Each slide's steps: every red circle with its note.
+  // Each slide's steps: every red circle with its note; a footnote comes with the last one.
   const steps = slides.map((slide) => {
     const notes = [...slide.querySelectorAll(".notes li")];
     const list = [...slide.querySelectorAll(".mark")].map((mark, i) => [mark, notes[i]].filter(Boolean));
+    if (list.length) list.at(-1).push(...slide.querySelectorAll(".notes .footnote"));
     list.flat().forEach((element) => element.classList.add("build"));
     return list;
   });
