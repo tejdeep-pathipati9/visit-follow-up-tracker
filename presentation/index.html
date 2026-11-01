@@ -19,7 +19,13 @@
   .stage { position: fixed; inset: 0; display: grid; place-items: center; }
   .deck { width: 1280px; height: 720px; position: relative; transform-origin: center center; }
   .slide { position: absolute; inset: 0; background: #fff; padding: 44px 64px 76px; display: none; flex-direction: column; overflow: hidden; box-shadow: 0 10px 40px rgba(0, 0, 0, .35); }
-  .slide.active { display: flex; }
+  .slide.active { display: flex; animation: enter .35s ease-out; }
+  @keyframes enter { from { opacity: 0; } to { opacity: 1; } }
+  /* Feature slides build up: each red circle with its note, then the takeaway (see the script). */
+  .build { opacity: 0; transition: opacity .3s ease, transform .3s ease; }
+  .mark.build { transform: scale(1.15); }
+  .notes li.build, .takeaway.build { transform: translateY(6px); }
+  .slide .build.shown { opacity: 1; transform: none; }
   .eyebrow { font-size: 13px; letter-spacing: .12em; text-transform: uppercase; color: var(--accent); font-weight: 700; margin-bottom: 8px; }
   h1 { font-size: 34px; font-weight: 700; margin: 0 0 22px; letter-spacing: -.01em; }
   /* The words to remember on each slide */
@@ -40,9 +46,6 @@
   .cover .title { font-size: 56px; font-weight: 700; letter-spacing: -.02em; line-height: 1.05; margin: 0 0 18px; }
   .cover .subtitle { font-size: 22px; color: #b9d6ee; }
   .cover .meta { display: flex; justify-content: space-between; align-items: flex-end; font-size: 15px; color: #b9d6ee; border-top: 1px solid rgba(255, 255, 255, .18); padding-top: 18px; }
-  .demo { list-style: none; counter-reset: step; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 14px; }
-  .demo li { counter-increment: step; display: grid; grid-template-columns: 34px 1fr; gap: 16px; align-items: center; font-size: 21px; color: #dbe9f6; }
-  .demo li::before { content: counter(step); width: 34px; height: 34px; border-radius: 50%; background: var(--brand); color: #fff; font-size: 16px; font-weight: 800; display: grid; place-items: center; }
 
   /* What we built: the product on a blue panel that runs off the slide */
   .hero .copy { width: 520px; flex: 1; display: flex; flex-direction: column; justify-content: center; position: relative; z-index: 1; }
@@ -53,16 +56,6 @@
   .cap { display: grid; grid-template-columns: 30px 1fr; gap: 16px; align-items: start; }
   .cap b { display: block; font-size: 18px; margin-bottom: 2px; }
   .cap span { font-size: 15px; color: var(--muted); line-height: 1.4; }
-
-  /* How each promise is checked */
-  .proof { display: flex; flex-direction: column; }
-  .proof-row { display: grid; grid-template-columns: 30px 290px 1fr 120px; gap: 18px; align-items: center; padding: 15px 0; border-top: 1px solid var(--line); }
-  .proof-row:last-child { border-bottom: 1px solid var(--line); }
-  .proof-row.head { padding: 0 0 8px; border-top: 0; font-size: 12px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
-  .proof-row b { font-size: 17px; }
-  .proof-row span { font-size: 14.5px; color: var(--muted); line-height: 1.4; }
-  .proof-row .live { justify-self: end; font-size: 13px; font-weight: 700; color: var(--accent); background: var(--accent-soft); border-radius: 999px; padding: 5px 12px; white-space: nowrap; }
-  .proof-note { margin-top: 18px; font-size: 14px; color: var(--muted); }
 
   /* When a follow-up is flagged: a timeline, and a dashed box for "no date yet" */
   .pill { border-radius: 999px; padding: 6px 12px; font-size: 14px; font-weight: 700; text-align: center; }
@@ -96,25 +89,25 @@
   .takeaway { margin-top: 24px; background: var(--ink); color: #fff; border-radius: 6px; padding: 14px 16px; font-size: 15px; font-weight: 600; line-height: 1.4; }
   .footnote { margin-top: 18px; font-size: 13px; color: var(--muted); line-height: 1.5; }
 
-  /* Operations slide */
-  .ops { flex: 1; display: grid; grid-template-columns: 1fr 330px; gap: 22px; min-height: 0; align-items: center; }
-  .terminal { margin: 0; background: #0f172a; color: #cbd5e1; border-radius: 4px; padding: 16px 18px; font: 11.5px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; overflow: hidden; max-height: 100%; }
-  .terminal .cmd { color: #7dd3fc; } .terminal .bad { color: #fca5a5; } .terminal .ok { color: #bbf7d0; }
+  /* Running it: three versions in turn over one store of records */
+  .ops { flex: 1; display: grid; grid-template-columns: 1fr 330px; gap: 40px; align-items: center; min-height: 0; }
+  .ops-visual { background: var(--accent-soft); border-radius: 8px; padding: 36px 32px 32px; }
+  .vers { display: flex; align-items: center; justify-content: space-between; }
+  .vers .arrow { font-size: 26px; }
+  .ver { position: relative; width: 170px; background: #fff; border: 1px solid #c9dcec; border-radius: 8px; padding: 14px 12px; display: flex; flex-direction: column; align-items: center; gap: 4px; text-align: center; }
+  .ver.new { border: 2px solid var(--brand); }
+  .ver b { font-size: 20px; }
+  .ver span { font-size: 13px; color: var(--muted); }
+  .ver::after { content: ""; position: absolute; left: 50%; top: 100%; height: 34px; border-left: 2px dashed #8fb3d3; }
+  .volume { margin-top: 34px; display: grid; grid-template-columns: 30px 1fr; gap: 14px; align-items: center; background: var(--ink); color: #fff; border-radius: 8px; padding: 16px 20px; }
+  .volume .ic { color: #7cc0f0; }
+  .volume b { display: block; font-size: 17px; margin-bottom: 2px; }
+  .volume span { font-size: 14px; color: #b9cde0; }
   .ops-side { display: flex; flex-direction: column; }
-  .ops-side > div { border-top: 1px solid var(--line); padding: 14px 0; }
-  .ops-side > div:last-child { border-bottom: 1px solid var(--line); }
-  .step { display: grid; grid-template-columns: 22px 1fr; gap: 12px; align-items: start; }
-  .ops-side b { display: block; font-size: 15px; margin-bottom: 3px; }
-  .ops-side span { font-size: 13px; color: var(--muted); line-height: 1.4; }
-  /* Upgrade and roll back: three containers in turn, one volume underneath */
-  .vers { display: flex; align-items: center; justify-content: space-between; margin-top: 10px; }
-  .vers .arrow { font-size: 20px; }
-  .ver { position: relative; display: flex; align-items: center; gap: 6px; border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; font-size: 14px; font-weight: 700; }
-  .ver.new { border-color: #9cc3e3; background: var(--accent-soft); }
-  .ver::after { content: ""; position: absolute; left: 50%; top: 100%; height: 17px; border-left: 1.5px dashed #9aa4b2; }
-  .volume { margin-top: 18px; display: grid; grid-template-columns: 22px 1fr; gap: 10px; align-items: center; border: 1px solid #9cc3e3; background: var(--accent-soft); border-radius: 6px; padding: 9px 12px; }
-  .volume span { color: var(--ink); }
-  .rollback-note { display: block; margin-top: 10px; }
+  .step { display: grid; grid-template-columns: 22px 1fr; gap: 12px; align-items: start; padding: 16px 0; border-top: 1px solid var(--line); }
+  .step:last-child { border-bottom: 1px solid var(--line); }
+  .step b { display: block; font-size: 16px; margin-bottom: 3px; }
+  .step span { font-size: 14px; color: var(--muted); line-height: 1.4; }
 
   .nav { position: fixed; top: 10px; right: 14px; display: flex; gap: 8px; align-items: center; color: #cfd6df; font-size: 13px; z-index: 10; opacity: .2; transition: opacity .2s; }
   .nav:hover { opacity: 1; }
@@ -129,7 +122,8 @@
     html, body { background: #fff; overflow: visible; height: auto; }
     .stage { position: static; display: block; }
     .deck { transform: none !important; height: auto; }
-    .slide { position: relative; display: flex !important; height: 720px; box-shadow: none; break-after: page; }
+    .slide { position: relative; display: flex !important; height: 720px; box-shadow: none; break-after: page; animation: none !important; }
+    .build { opacity: 1 !important; transform: none !important; transition: none !important; }
     .slide:last-child { break-after: auto; }
     .nav { display: none; }
   }
@@ -160,7 +154,6 @@
     </div>
     <div class="meta">
       <div>Sanket Deshmukh · Jihyung Park · Tejdeep Pathipati</div>
-      <div>Week 3 team project</div>
     </div>
   </section>
 
@@ -318,7 +311,7 @@
           <li><span class="n">3</span><div><b>Matches the screen</b><span>5 + 3 + 2 = 10, her overdue count.</span></div></li>
         </ol>
         <div class="takeaway">Questions only: “Mark F001 as done” is refused.</div>
-        <p class="footnote">The model sees the question, the table layout, and the asker's staff ID. Patient records stay on the server.</p>
+        <p class="footnote">The AI model sees the question, the table layout, and the asker's staff ID, never patient records.</p>
       </div>
     </div>
     <div class="footer"><div class="flogo"></div><span>Visit Follow-Up Tracker</span><span class="pg"></span></div>
@@ -345,62 +338,24 @@
   </section>
 
   <section class="slide">
-    <div class="eyebrow">Operations</div>
-    <h1>Runs the same anywhere; <em>the data survives</em></h1>
+    <div class="eyebrow">Running it</div>
+    <h1>Updates change the program, <em>never the records</em></h1>
     <div class="ops">
-      <pre class="terminal"><span class="cmd">$ python scripts/import_data.py --file data/generated/visits_with_bad_rows.json</span>
-<span class="bad">Rejected data/generated/visits_with_bad_rows.json: nothing was saved. 12 problem(s):</span>
-<span class="bad">  patient PBAD01: name: Field required</span>
-<span class="bad">  staff SBAD01: role: Field required</span>
-<span class="bad">  episode EBAD01: closed_at must not be before opened_at</span>
-<span class="bad">  followup FBAD01: action_type: unsupported action type &#x27;surgery&#x27;; allowed types: lab, referral, recheck</span>
-<span class="bad">  followup FBAD02: due_date: must be a valid date in YYYY-MM-DD format</span>
-<span class="bad">  followup unknown: followup_id: Field required</span>
-<span class="bad">  followup FBAD04: completed_at: is required when status is closed</span>
-<span class="bad">  followup FBAD05: notes: a reason is required when status is closed, such as &#x27;patient unreachable&#x27;</span>
-<span class="bad">  followup FBAD06: assigned_staff_id: Field required</span>
-<span class="bad">  visit VBAD01: patient_id: Field required</span>
-<span class="bad">  episode EBAD02: patient PMISSING does not exist</span>
-<span class="bad">  visit VBAD02: episode EMISSING does not exist</span>
-<span class="cmd">$ python scripts/import_data.py --file data/generated/clean_visits.json</span>
-<span class="ok">Imported data/generated/clean_visits.json: 15 patients, 5 staff, 23 episodes, 40 visits, 79 followups</span>
-<span class="cmd">$ python scripts/backup_db.py</span>
-<span class="ok">Backed up data/followups.db to backups/followups-20261101T025350Z.db: integrity_check ok, test restore matched (15 patients, 5 staff, 23 episodes, 40 visits, 79 followups, 0 followup_history)</span>
-<span class="cmd">$ python scripts/delete_old_records.py --dry-run</span>
-<span class="ok">Would delete records from before 2016-10-31: 0 followup_history, 0 followups, 0 visits, 0 episodes, 0 patients</span></pre>
-      <div class="ops-side">
-        <div>
-          <b>Upgrade, roll back, keep the data</b>
-          <div class="vers">
-            <div class="ver"><svg class="ic sm"><use href="#i-box"/></svg>1.0.0</div>
-            <span class="arrow">→</span>
-            <div class="ver new"><svg class="ic sm"><use href="#i-box"/></svg>1.1.0</div>
-            <span class="arrow">→</span>
-            <div class="ver"><svg class="ic sm"><use href="#i-box"/></svg>1.0.0</div>
-          </div>
-          <div class="volume"><svg class="ic sm"><use href="#i-db"/></svg><span>One Docker volume: the database and its history</span></div>
-          <span class="rollback-note">1.1.0 adds passwords. Each version replaces the container; the volume stays.</span>
+      <div class="ops-visual">
+        <div class="vers">
+          <div class="ver"><svg class="ic"><use href="#i-box"/></svg><b>1.0.0</b><span>Today</span></div>
+          <span class="arrow">→</span>
+          <div class="ver new"><svg class="ic"><use href="#i-box"/></svg><b>1.1.0</b><span>Adds passwords</span></div>
+          <span class="arrow">→</span>
+          <div class="ver"><svg class="ic"><use href="#i-box"/></svg><b>1.0.0</b><span>Roll back if needed</span></div>
         </div>
-        <div class="step"><svg class="ic sm"><use href="#i-shield"/></svg><div><b>Verified backups</b><span><code>Connection.backup</code>, <code>integrity_check</code>, and a test restore.</span></div></div>
-        <div class="step"><svg class="ic sm"><use href="#i-calendar"/></svg><div><b>10-year retention</b><span>Old visits and their history are deleted; <code>--dry-run</code> shows the counts first.</span></div></div>
+        <div class="volume"><svg class="ic"><use href="#i-db"/></svg><div><b>The clinic's records and their history</b><span>Stored apart from the program, so every version finds them where they were</span></div></div>
       </div>
-    </div>
-    <div class="footer"><div class="flogo"></div><span>Visit Follow-Up Tracker</span><span class="pg"></span></div>
-  </section>
-
-  <section class="slide">
-    <div class="eyebrow">How we know it works</div>
-    <h1>Every promise is <em>checked, not assumed</em></h1>
-    <div class="body">
-      <div class="proof">
-        <div class="proof-row head"><span></span><span>Promise</span><span>How we checked it</span><span style="justify-self:end">See it live</span></div>
-        <div class="proof-row"><svg class="ic"><use href="#i-file-x"/></svg><b>A bad file never half-saves</b><span>A file with deliberate bad records saves nothing, and a save that fails midway leaves nothing behind.</span><span class="live">Demo step 1</span></div>
-        <div class="proof-row"><svg class="ic"><use href="#i-lock"/></svg><b>Staff never see others' work</b><span>Signed in as one staff member, tests try other people's records, downloads, the report, and questions that read the tables directly.</span><span class="live">Demo step 3</span></div>
-        <div class="proof-row"><svg class="ic"><use href="#i-history"/></svg><b>Every change is traceable</b><span>A change and its history row are saved together or not at all, with who made it and their note.</span><span class="live">Demo step 3</span></div>
-        <div class="proof-row"><svg class="ic"><use href="#i-shield"/></svg><b>Questions never change records</b><span>Even if the model writes an UPDATE or DELETE, the read-only connection refuses it.</span><span class="live">Demo step 4</span></div>
-        <div class="proof-row"><svg class="ic"><use href="#i-db"/></svg><b>The data outlasts the container</b><span>Backups are integrity-checked and test-restored; replacing the container keeps the volume.</span><span class="live">Demo step 5</span></div>
+      <div class="ops-side">
+        <div class="step"><svg class="ic sm"><use href="#i-box"/></svg><div><b>Installs the same way anywhere</b><span>One package sets it up identically on any clinic computer.</span></div></div>
+        <div class="step"><svg class="ic sm"><use href="#i-shield"/></svg><div><b>Backups that are checked</b><span>Every backup is checked and test-restored before anyone relies on it.</span></div></div>
+        <div class="step"><svg class="ic sm"><use href="#i-calendar"/></svg><div><b>Kept 10 years, then deleted</b><span>As the clinic asked; a preview shows what would be deleted first.</span></div></div>
       </div>
-      <p class="proof-note">The automated checks run on every pull request; the demo shows the same things live.</p>
     </div>
     <div class="footer"><div class="flogo"></div><span>Visit Follow-Up Tracker</span><span class="pg"></span></div>
   </section>
@@ -409,35 +364,49 @@
     <div class="logo-white"></div>
     <div>
       <div class="title">Demo</div>
-      <ol class="demo">
-        <li>Import a file with one bad record: refused, nothing saved</li>
-        <li>Import the clean file: flags, counts, and the printable report</li>
-        <li>Sign in as a nurse: only her follow-ups; close one with a reason</li>
-        <li>Ask in plain English; a request to change a record is refused</li>
-        <li>Replace the container: the data and its history stay</li>
-      </ol>
     </div>
     <div class="meta"><div>Then questions</div></div>
   </section>
 </div>
 </div>
 <div class="nav">
-  <button id="prev" aria-label="Previous slide">‹</button>
+  <button id="prev" aria-label="Back">‹</button>
   <span id="count"></span>
-  <button id="next" aria-label="Next slide">›</button>
+  <button id="next" aria-label="Next">›</button>
   <button id="full" aria-label="Full screen" title="Full screen (F)">⛶</button>
 </div>
 <script>
-  // Arrow keys or Space to move, F or double-click for full screen, print for a PDF.
+  // Right arrow, Space, or Page Down shows the next red circle, then the next slide; Left
+  // goes back. F or double-click for full screen; printing gives a PDF with everything shown.
   const slides = [...document.querySelectorAll(".slide")];
   const deck = document.getElementById("deck");
+  // Each slide's steps: every red circle with its note, then the takeaway and footnote.
+  const steps = slides.map((slide) => {
+    const notes = [...slide.querySelectorAll(".notes li")];
+    const list = [...slide.querySelectorAll(".mark")].map((mark, i) => [mark, notes[i]].filter(Boolean));
+    const closing = [...slide.querySelectorAll(".takeaway, .notes .footnote")];
+    if (closing.length) list.push(closing);
+    list.flat().forEach((element) => element.classList.add("build"));
+    return list;
+  });
   let current = Math.min(Math.max(parseInt(location.hash.slice(1), 10) - 1 || 0, 0), slides.length - 1);
+  let shown = 0;
   slides.forEach((slide, i) => { const pg = slide.querySelector(".pg"); if (pg) pg.textContent = `${i + 1} / ${slides.length}`; });
-  function show(index) {
+  function show(index, step = 0) {
     current = Math.min(Math.max(index, 0), slides.length - 1);
+    shown = step === "all" ? steps[current].length : step;
     slides.forEach((slide, i) => slide.classList.toggle("active", i === current));
+    steps[current].forEach((group, i) => group.forEach((element) => element.classList.toggle("shown", i < shown)));
     document.getElementById("count").textContent = `${current + 1} / ${slides.length}`;
     history.replaceState(null, "", `#${current + 1}`);
+  }
+  function next() {
+    if (shown < steps[current].length) show(current, shown + 1);
+    else if (current < slides.length - 1) show(current + 1);
+  }
+  function back() {
+    if (shown > 0) show(current, shown - 1);
+    else if (current > 0) show(current - 1, "all");
   }
   function fit() {
     const margin = document.fullscreenElement ? 1 : 0.96;
@@ -447,14 +416,14 @@
     if (document.fullscreenElement) document.exitFullscreen(); else document.documentElement.requestFullscreen?.();
   }
   document.addEventListener("keydown", (event) => {
-    if (["ArrowRight", "PageDown", " "].includes(event.key)) { event.preventDefault(); show(current + 1); }
-    if (["ArrowLeft", "PageUp"].includes(event.key)) { event.preventDefault(); show(current - 1); }
+    if (["ArrowRight", "PageDown", " "].includes(event.key)) { event.preventDefault(); next(); }
+    if (["ArrowLeft", "PageUp"].includes(event.key)) { event.preventDefault(); back(); }
     if (event.key === "Home") show(0);
-    if (event.key === "End") show(slides.length - 1);
+    if (event.key === "End") show(slides.length - 1, "all");
     if (event.key === "f" || event.key === "F") toggleFullscreen();
   });
-  document.getElementById("prev").onclick = () => show(current - 1);
-  document.getElementById("next").onclick = () => show(current + 1);
+  document.getElementById("prev").onclick = back;
+  document.getElementById("next").onclick = next;
   document.getElementById("full").onclick = toggleFullscreen;
   document.addEventListener("dblclick", toggleFullscreen);
   document.addEventListener("fullscreenchange", fit);
