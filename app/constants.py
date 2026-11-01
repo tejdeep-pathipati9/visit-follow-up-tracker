@@ -3,7 +3,7 @@
 from typing import Literal, get_args
 
 ActionType = Literal["lab", "referral", "recheck"]
-FollowUpStatus = Literal["open", "done"]
+FollowUpStatus = Literal["open", "done", "closed"]  # closed: could not be completed
 FollowUpFlag = Literal["overdue", "due_soon", "unassigned"]
 EpisodeStatus = Literal["open", "closed"]
 
@@ -12,3 +12,5 @@ FOLLOWUP_STATUSES = get_args(FollowUpStatus)
 FOLLOWUP_FLAGS = get_args(FollowUpFlag)
 EPISODE_STATUSES = get_args(EpisodeStatus)
 DUE_SOON_DAYS = 7
+# The clinic keeps records for 10 years, then deletes them (its own policy, not a regulation).
+RETENTION_YEARS = 10

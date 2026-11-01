@@ -30,7 +30,7 @@ def test_followups_default_to_due_date_order_with_rule_flags(client):
     assert ids(page) == ["F005", "F006", "F001", "F007", "F002", "F003", "F004"]
     flags = {item["followup_id"]: item["flags"] for item in page["items"]}
     assert flags == {
-        "F001": ["overdue", "unassigned"], "F002": ["due_soon"], "F003": ["due_soon"],
+        "F001": ["overdue"], "F002": ["due_soon"], "F003": ["due_soon"],
         "F004": ["unassigned"], "F005": [], "F006": ["overdue"], "F007": ["overdue"],
     }
     first = page["items"][1]
@@ -43,12 +43,25 @@ def test_followups_default_to_due_date_order_with_rule_flags(client):
 @pytest.mark.parametrize(("flag", "expected"), [
     ("overdue", ["F001", "F006", "F007"]),
     ("due_soon", ["F002", "F003"]),
-    ("unassigned", ["F001", "F004"]),
+    ("unassigned", ["F004"]),
 ])
 def test_flag_filters_match_rule_flags(client, flag, expected):
     assert followup_ids(client, flag=flag) == expected
     every = get(client, "/api/followups")["items"]
     assert sorted(item["followup_id"] for item in every if flag in item["flags"]) == expected
+
+
+def test_due_soon_window_depends_on_the_action_type(client):
+    # config/settings.json: lab 3 days, referral and recheck 14 days. On Oct 22 the
+    # lab F002 (due in 4 days) is not yet due soon, while the recheck F003 (due in
+    # 11 days) already is. F004 has no scheduled date, so it is never due soon.
+    page = get(client, "/api/followups", as_of_date="2026-10-22", flag="due_soon")
+    assert ids(page) == ["F006", "F001", "F007", "F003"]
+    assert all(item["flags"] == ["due_soon"] for item in page["items"])
+    stats = get(client, "/api/followups/stats", as_of_date="2026-10-22")
+    assert stats["totals"]["due_soon_followups"] == 4
+    options = get(client, "/api/options")
+    assert options["due_soon_days_by_action"] == {"lab": 3, "referral": 14, "recheck": 14}
 
 
 @pytest.mark.parametrize(("params", "expected"), [
@@ -60,19 +73,18 @@ def test_flag_filters_match_rule_flags(client, flag, expected):
     ({"visit_id": "V002", "action_type": "lab"}, ["F007"]),
     ({"episode_id": "E001", "status": "open"}, ["F001", "F002"]),
     ({"assigned_staff_id": ["S001", "S002"]}, ["F002", "F003", "F006", "F007"]),
-    ({"unassigned": "true"}, ["F001", "F004", "F005"]),
-    ({"unassigned": "false", "status": "open"}, ["F002", "F003", "F006", "F007"]),
+    ({"assigned_staff_id": "S003"}, ["F001", "F004"]),
     ({"staff_id": "S002"}, ["F001", "F002", "F003", "F005"]),
     ({"staff_name": "example"}, ["F002", "F003", "F004", "F006", "F007"]),
     ({"visit_staff_role": "nurse"}, ["F001", "F002", "F005"]),
-    ({"assigned_staff_role": "doctor"}, ["F002", "F006", "F007"]),
+    ({"assigned_staff_role": "doctor"}, ["F001", "F002", "F004", "F005", "F006", "F007"]),
     ({"q": "zoë"}, ["F003", "F004", "F006", "F007"]),
     ({"q": "F00", "patient_name": "alice"}, ["F001", "F002", "F005"]),
     ({"episode_description": "recheck"}, ["F003", "F004", "F006", "F007"]),
     ({"due_from": "2026-10-25", "due_to": "2026-10-26"}, ["F001", "F002", "F007"]),
     ({"due_within_days": 0}, ["F002"]),
     ({"due_within_days": 7}, ["F002", "F003"]),
-    ({"due_within_days": 8}, ["F002", "F003", "F004"]),
+    ({"due_within_days": 8}, ["F002", "F003"]),
     ({"days_overdue_min": 2}, ["F006"]),
     ({"days_overdue_max": 1}, ["F001", "F007"]),
     ({"days_overdue_min": 0}, ["F001", "F006", "F007"]),
@@ -111,7 +123,7 @@ def test_every_preset_runs(client, preset):
 @pytest.mark.parametrize(("params", "expected"), [
     ({"preset": "overdue"}, ["F001", "F006", "F007"]),
     ({"preset": "overdue", "action_type": "referral"}, ["F006"]),
-    ({"preset": "unassigned_overdue"}, ["F001"]),
+    ({"preset": "unassigned"}, ["F004"]),
     ({"preset": "due_today"}, ["F002"]),
     ({"preset": "open_labs"}, ["F001", "F002", "F007"]),
     ({"preset": "completed_last_7_days"}, ["F005"]),
@@ -123,23 +135,31 @@ def test_presets_and_filters_combine(client, params, expected):
 
 def test_followup_sorting_and_paging(client):
     page = get(client, "/api/followups", sort="-due_date", limit=2, offset=1)
-    assert ids(page) == ["F003", "F002"]
+    assert ids(page) == ["F002", "F001"]
+    # Follow-ups without a scheduled date sort last in both directions.
+    assert ids(get(client, "/api/followups", sort="due_date"))[-1] == "F004"
+    assert ids(get(client, "/api/followups", sort="-due_date"))[-1] == "F004"
     assert (page["total"], page["limit"], page["offset"]) == (7, 2, 1)
-    assert ids(get(client, "/api/followups", sort="assigned_staff_name"))[-3:] == ["F005", "F001", "F004"]
+    # Within one staff member, follow-ups without a scheduled date come last.
+    assert ids(get(client, "/api/followups", sort="assigned_staff_name"))[:3] == ["F005", "F001", "F004"]
     assert ids(get(client, "/api/followups", sort="-completed_at"))[0] == "F005"
 
 
 def test_followup_stats_totals_and_groups(client):
     stats = get(client, "/api/followups/stats", group_by="assigned_staff")
     assert stats["totals"] | {} == {
-        "followup_count": 7, "open_followups": 6, "done_followups": 1, "overdue_followups": 3,
-        "due_today_followups": 1, "due_soon_followups": 2, "unassigned_followups": 2,
+        "followup_count": 7, "open_followups": 6, "done_followups": 1, "closed_followups": 0, "overdue_followups": 3,
+        "due_today_followups": 1, "due_soon_followups": 2, "unassigned_followups": 1,
         "next_due_date": "2026-10-24",
     }
     groups = [(group["key"], group["label"], group["followup_count"]) for group in stats["groups"]]
-    assert groups == [("S001", "Dr. Example", 3), (None, "Unassigned", 3), ("S002", "Nurse Sample", 1)]
+    assert groups == [
+        ("S001", "Dr. Example", 3), ("S003", "Dr. Duplicate", 2), ("S004", "Dr. Duplicate", 1), ("S002", "Nurse Sample", 1),
+    ]
     filtered = get(client, "/api/followups/stats", group_by="due_month", status="open")
-    assert [(group["key"], group["followup_count"]) for group in filtered["groups"]] == [("2026-10", 4), ("2026-11", 2)]
+    assert [(group["key"], group["label"], group["followup_count"]) for group in filtered["groups"]] == [
+        ("2026-10", "2026-10", 4), ("2026-11", "2026-11", 1), (None, "Not scheduled", 1),
+    ]
 
 
 @pytest.mark.parametrize("group_by", get_args(FollowUpGroup))
@@ -172,8 +192,8 @@ def test_staff_search_reports_assigned_workload(client):
     )
     assert ids(get(client, "/api/staff", role="nurse"), "staff_id") == ["S002"]
     assert ids(get(client, "/api/staff", q="duplicate"), "staff_id") == ["S003", "S004"]
-    assert ids(get(client, "/api/staff", open_followups_min=1), "staff_id") == ["S001", "S002"]
-    assert get(client, "/api/staff", flag="unassigned")["total"] == 0
+    assert ids(get(client, "/api/staff", open_followups_min=1), "staff_id") == ["S003", "S001", "S002"]
+    assert ids(get(client, "/api/staff", flag="unassigned"), "staff_id") == ["S003"]
 
 
 def test_visit_search(client):
@@ -236,15 +256,15 @@ def test_dashboard(client):
     assert dashboard["patients_with_overdue"] == 2
     assert dashboard["open_episodes"] == 2
     assert dashboard["visits_last_30_days"] == 2
-    assert dashboard["staff_with_overdue"] == 1
+    assert dashboard["staff_with_overdue"] == 2
 
 
 def test_options_for_dropdowns_and_sliders(client):
     options = get(client, "/api/options")
     assert options["action_types"] == ["lab", "referral", "recheck"]
-    assert [staff["staff_id"] for staff in options["staff"]] == ["S003", "S004", "S001", "S002"]
-    assert options["staff_roles"] == ["doctor", "nurse"]
-    assert options["date_ranges"]["due"] == {"min": "2026-10-20", "max": "2026-11-03"}
+    assert [staff["staff_id"] for staff in options["staff"]] == ["S003", "S004", "S001", "S005", "S002"]
+    assert options["staff_roles"] == ["doctor", "manager", "nurse"]
+    assert options["date_ranges"]["due"] == {"min": "2026-10-20", "max": "2026-11-02"}
     assert options["date_ranges"]["completed"] == {"min": "2026-10-21", "max": "2026-10-21"}
     assert {preset["name"] for preset in options["presets"]} == set(get_args(FollowUpPreset))
     assert "-due_date" in options["sorts"]["followups"]

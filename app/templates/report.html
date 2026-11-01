@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Follow-up report · {{ report.as_of_date }}</title>
+    <link rel="stylesheet" href="{{ url_for('static', path='report.css') }}">
+  </head>
+  <body>
+    <div class="actions">
+      <a href="/">Back to the tracker</a>
+      <button type="button" onclick="window.print()">Print</button>
+    </div>
+
+    <header>
+      <h1>Follow-up report</h1>
+      <p>
+        As of <strong>{{ report.as_of_date }}</strong> ·
+        {% if report.all_followups %}All follow-ups{% else %}Follow-ups assigned to {{ report.prepared_for }}{% endif %} ·
+        Prepared for {{ report.prepared_for }}
+      </p>
+      <p class="note">Synthetic data only. This report flags follow-ups; it does not decide care.</p>
+    </header>
+
+    <section class="summary">
+      {% for section in report.sections %}
+        <div class="count {{ section.flag }}"><strong>{{ section.followups | length }}</strong> {{ section.title }}</div>
+      {% endfor %}
+    </section>
+
+    {% set flagged = report.sections | map(attribute="followups") | map("length") | sum %}
+    {% if flagged == 0 %}
+      <p class="empty">No follow-ups need attention: nothing is overdue, due soon, or unassigned.</p>
+    {% endif %}
+
+    {% for section in report.sections if section.followups %}
+      <section class="group">
+        <h2 class="{{ section.flag }}">{{ section.title }} ({{ section.followups | length }})</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Follow-up</th><th>Patient ID</th><th>Patient</th><th>Action</th>
+              <th>Scheduled date</th><th>When</th><th>Assigned to</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for item in section.followups %}
+              <tr>
+                <td>{{ item.followup_id }}</td>
+                <td>{{ item.patient_id }}</td>
+                <td>{{ item.patient_name }}</td>
+                <td>{{ item.action_type | capitalize }}</td>
+                <td>{{ item.due_date or "Not scheduled" }}</td>
+                <td>
+                  {%- if item.days_until_due is none -%}—
+                  {%- elif item.days_until_due < 0 -%}{{ -item.days_until_due }} days late
+                  {%- elif item.days_until_due == 0 -%}today
+                  {%- else -%}in {{ item.days_until_due }} days{%- endif -%}
+                </td>
+                <td>{{ item.assigned_staff_name }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </section>
+    {% endfor %}
+  </body>
+</html>

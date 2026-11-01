@@ -18,6 +18,11 @@ COPY app/ ./app/
 COPY config/ ./config/
 COPY data/sample_visits.json ./data/sample_visits.json
 COPY scripts/table_generate.py ./scripts/table_generate.py
+COPY scripts/create_manager.py ./scripts/create_manager.py
+COPY scripts/generate_synthetic_data.py ./scripts/generate_synthetic_data.py
+COPY scripts/import_data.py ./scripts/import_data.py
+COPY scripts/delete_old_records.py ./scripts/delete_old_records.py
+COPY scripts/backup_db.py ./scripts/backup_db.py
 
 USER tracker
 EXPOSE 8000

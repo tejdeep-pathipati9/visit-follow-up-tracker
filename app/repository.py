@@ -7,7 +7,7 @@ from time import monotonic
 from app.models import QueryRequest, QueryResponse
 
 READABLE_TABLES = frozenset({
-    "patients", "staff", "episodes", "visits", "followups", "status_changes",
+    "patients", "staff", "episodes", "visits", "followups", "followup_history",
 })
 ALLOWED_FUNCTIONS = frozenset({
     "abs", "avg", "coalesce", "count", "date", "datetime", "dense_rank",
@@ -20,8 +20,46 @@ ALLOWED_FUNCTIONS = frozenset({
 })
 # Contact details read as NULL in AI-generated queries; staff UI searches still see them.
 SENSITIVE_COLUMNS = frozenset({("patients", "phone"), ("patients", "email")})
+
+# The rows a staff member who is not a manager may see: the follow-ups assigned to them,
+# the patients those belong to with their episodes and visits, and those follow-ups'
+# history. {staff} is :scope_staff in searches (NULL for a manager) and the quoted staff
+# ID in a scoped question. Entries after "followups" read the already-limited follow-ups.
+SCOPED_ROWS = {
+    "followups": "SELECT * FROM main.followups WHERE {staff} IS NULL OR assigned_staff_id = {staff}",
+    "patients": "SELECT * FROM main.patients WHERE {staff} IS NULL OR patient_id IN ({patients})",
+    "episodes": "SELECT * FROM main.episodes WHERE {staff} IS NULL OR patient_id IN ({patients})",
+    "visits": "SELECT * FROM main.visits WHERE {staff} IS NULL OR patient_id IN ({patients})",
+    "followup_history": (
+        "SELECT * FROM main.followup_history WHERE {staff} IS NULL OR followup_id IN (SELECT followup_id FROM followups)"
+    ),
+}
+SCOPED_PATIENTS = "SELECT v.patient_id FROM followups f JOIN main.visits v ON v.visit_id = f.visit_id"
+
+
+def scoped_rows(table: str, staff: str) -> str:
+    return SCOPED_ROWS[table].format(staff=staff, patients=SCOPED_PATIENTS)
+
+
+def limit_to_staff(connection: sqlite3.Connection, staff_id: str) -> None:
+    """Shadow the scoped tables with temporary views for one staff member. Unqualified
+    names resolve to the temp schema first, so a query sees only those rows."""
+    literal = "'" + staff_id.replace("'", "''") + "'"
+    for table in SCOPED_ROWS:
+        connection.execute(f"DROP VIEW IF EXISTS temp.{table}")
+        connection.execute(f"CREATE TEMP VIEW {table} AS {scoped_rows(table, literal)}")
+
+
+def remove_staff_limit(connection: sqlite3.Connection) -> None:
+    for table in reversed(SCOPED_ROWS):
+        connection.execute(f"DROP VIEW IF EXISTS temp.{table}")
+
+
 QUERY_TIMEOUT_SECONDS = 2.0
 MAX_VM_STEPS = 1_000_000
+# The app's own searches must cover ten years of records (about 120,000 visits), which
+# takes far more than MAX_VM_STEPS; their SQL is written here, so only a time limit applies.
+BUILT_IN_TIMEOUT_SECONDS = 30.0
 MAX_RESULT_BYTES = 4 * 1024 * 1024
 
 
@@ -52,11 +90,16 @@ def execute_query(
     connection: sqlite3.Connection,
     request: QueryRequest,
     hidden_columns: frozenset[tuple[str, str]] = frozenset(),
+    scope: str | None = None,
+    built_in: bool = False,
 ) -> QueryResponse:
+    """Run one read-only query. With a scope (a staff ID), the query sees only that staff
+    member's rows: scoped tables can be read only through the temporary views. Built-in
+    searches skip the step limit and get a longer time limit; model-written SQL never does."""
     denied = False
     timed_out = False
     steps = 0
-    deadline = monotonic() + QUERY_TIMEOUT_SECONDS
+    deadline = monotonic() + (BUILT_IN_TIMEOUT_SECONDS if built_in else QUERY_TIMEOUT_SECONDS)
 
     def authorize(action, arg1, arg2, database, source):
         nonlocal denied
@@ -64,9 +107,15 @@ def execute_query(
             return sqlite3.SQLITE_OK
         # Some SQLite builds omit the database name for COUNT(*) table reads.
         main_table_read = database == "main" or (database is None and arg2 == "")
+        # SQLITE_IGNORE substitutes NULL, so hidden values cannot be selected or filtered on.
+        allowed = sqlite3.SQLITE_IGNORE if (arg1, arg2) in hidden_columns else sqlite3.SQLITE_OK
+        if action == sqlite3.SQLITE_READ and scope is not None and database == "temp" and arg1 in SCOPED_ROWS:
+            return allowed
         if action == sqlite3.SQLITE_READ and main_table_read and arg1 in READABLE_TABLES:
-            # SQLITE_IGNORE substitutes NULL, so hidden values cannot be selected or filtered on.
-            return sqlite3.SQLITE_IGNORE if (arg1, arg2) in hidden_columns else sqlite3.SQLITE_OK
+            if scope is not None and arg1 in SCOPED_ROWS and source not in SCOPED_ROWS:
+                denied = True  # "main.followups" would skip the staff member's limit
+                return sqlite3.SQLITE_DENY
+            return allowed
         if action == sqlite3.SQLITE_FUNCTION and (arg2 or "").lower() in ALLOWED_FUNCTIONS:
             return sqlite3.SQLITE_OK
         denied = True
@@ -75,7 +124,7 @@ def execute_query(
     def progress():
         nonlocal timed_out, steps
         steps += 1_000
-        timed_out = steps >= MAX_VM_STEPS or monotonic() >= deadline
+        timed_out = (not built_in and steps >= MAX_VM_STEPS) or monotonic() >= deadline
         return int(timed_out)
 
     # Bounds apply to SQL compilation and individual values as well as row count.
@@ -90,6 +139,8 @@ def execute_query(
     ):
         connection.setlimit(category, maximum)
 
+    if scope is not None:
+        limit_to_staff(connection, scope)
     # Keep authorization active during fetching: SQLite may reprepare a statement.
     # https://www.sqlite.org/c3ref/set_authorizer.html
     connection.set_authorizer(authorize)
@@ -135,3 +186,5 @@ def execute_query(
             cursor.close()
         connection.set_progress_handler(None, 0)
         connection.set_authorizer(None)
+        if scope is not None:
+            remove_staff_limit(connection)

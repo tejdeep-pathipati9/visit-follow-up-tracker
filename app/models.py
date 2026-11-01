@@ -49,22 +49,23 @@ class FollowUpRow(BaseModel):
     episode_description: str
     visit_date: date
     action_type: ActionType
-    due_date: date
-    assigned_staff_id: str | None
-    assigned_staff_name: str | None
+    due_date: date | None  # scheduled date; None means unassigned
+    assigned_staff_id: str
+    assigned_staff_name: str
     status: FollowUpStatus
-    completed_at: str | None
+    completed_at: str | None  # when it became done or closed
+    notes: str | None  # a closed follow-up says why it could not be completed
     flags: list[FollowUpFlag] = Field(default_factory=list)
 
 
 class FollowUpItem(FollowUpRow):
     """One follow-up row in UI search results, with rule flags already calculated."""
 
-    days_until_due: int
-    assigned_staff_role: str | None
-    visit_staff_id: str | None
-    visit_staff_name: str | None
-    visit_staff_role: str | None
+    days_until_due: int | None  # None until a date is scheduled
+    assigned_staff_role: str
+    visit_staff_id: str
+    visit_staff_name: str
+    visit_staff_role: str
     visit_notes: str | None
     episode_closed_at: date | None
 
@@ -81,7 +82,7 @@ Count = Annotated[int, Field(ge=0, le=100_000)]
 
 FollowUpPreset = Literal[
     "overdue", "overdue_30_plus", "due_today", "due_soon", "due_this_week", "due_next_30_days",
-    "unassigned", "unassigned_overdue", "open_labs", "open_referrals", "open_rechecks",
+    "unassigned", "closed", "open_labs", "open_referrals", "open_rechecks",
     "completed_last_7_days", "completed_last_30_days", "open_episode_followups",
 ]
 FollowUpSort = Literal[
@@ -139,7 +140,6 @@ class FollowUpFilters(AsOf):
     assigned_staff_id: IdList = []
     assigned_staff_name: SearchText | None = None
     assigned_staff_role: list[SearchText] = []
-    unassigned: bool | None = None
     visit_staff_id: IdList = []
     visit_staff_name: SearchText | None = None
     visit_staff_role: list[SearchText] = []
@@ -185,7 +185,7 @@ class PatientSearch(AsOf, Paging):
 
 
 class StaffSearch(AsOf, Paging):
-    q: SearchText | None = None  # ID or name
+    q: SearchText | None = None  # ID, name, or email
     staff_id: IdList = []
     role: list[SearchText] = []
     flag: list[FollowUpFlag] = []  # is assigned an open follow-up with any flag
@@ -256,6 +256,7 @@ class FollowUpCounts(BaseModel):
     followup_count: int = 0
     open_followups: int = 0
     done_followups: int = 0
+    closed_followups: int = 0
     overdue_followups: int = 0
     due_today_followups: int = 0
     due_soon_followups: int = 0
@@ -281,6 +282,7 @@ class StaffSummary(FollowUpCounts):
     staff_id: str
     name: str
     role: str
+    email: str | None
     visit_count: int
     patient_count: int
     last_visit_date: date | None
@@ -295,9 +297,9 @@ class VisitSummary(FollowUpCounts):
     episode_id: str
     episode_description: str
     episode_closed_at: date | None
-    staff_id: str | None
-    staff_name: str | None
-    staff_role: str | None
+    staff_id: str
+    staff_name: str
+    staff_role: str
 
 
 class EpisodeSummary(FollowUpCounts):
@@ -334,10 +336,70 @@ class EpisodeHistory(EpisodeSummary):
     visits: list[VisitHistory]
 
 
+HistoryField = Literal["status", "due_date", "assigned_staff_id"]
+
+
+class FollowUpChange(BaseModel):
+    """One change to a follow-up's status, scheduled date, or staff member, oldest first."""
+
+    change_id: int
+    field: HistoryField
+    old_value: str | None
+    new_value: str | None
+    changed_at: str
+    changed_by: str | None
+    changed_by_name: str | None
+    note: str | None
+
+
 class FollowUpDetail(BaseModel):
     followup: FollowUpItem
     patient: PatientSummary
     episode_followups: list[FollowUpItem]  # other follow-ups for the same medical issue
+    history: list[FollowUpChange]
+
+
+class ReportSection(BaseModel):
+    flag: FollowUpFlag
+    title: str
+    followups: list[FollowUpItem]  # open follow-ups with this flag, by scheduled date
+
+
+class Report(BaseModel):
+    """Printable report for the clinic manager: flagged follow-ups grouped by flag."""
+
+    as_of_date: date
+    prepared_for: str
+    all_followups: bool  # False when limited to the reader's own follow-ups
+    sections: list[ReportSection]
+
+
+class Rejection(BaseModel):
+    kind: str
+    record_id: str
+    reason: str
+
+
+class ImportResult(BaseModel):
+    """saved is False when any record was rejected; then nothing was saved."""
+
+    saved: bool
+    counts: dict[str, int]
+    rejections: list[Rejection]
+
+
+class SessionInfo(BaseModel):
+    staff_id: str
+    name: str
+    role: str
+    email: str
+    is_manager: bool
+
+
+class SignIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    email: Annotated[str, StringConstraints(strip_whitespace=True, min_length=3, max_length=200)]
 
 
 class PatientDetail(BaseModel):
@@ -392,7 +454,7 @@ class SearchOptions(BaseModel):
     """Values for dropdowns, slider bounds, and sort menus."""
 
     as_of_date: date
-    due_soon_days: int
+    due_soon_days_by_action: dict[ActionType, int]
     action_types: list[ActionType]
     followup_statuses: list[FollowUpStatus]
     followup_flags: list[FollowUpFlag]
@@ -412,6 +474,10 @@ class SearchOptions(BaseModel):
 
 Name = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
 Contact = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
+# Staff sign in with this address, so it is checked and stored in lower case.
+StaffEmail = Annotated[str, StringConstraints(
+    strip_whitespace=True, to_lower=True, max_length=200, pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$",
+)]
 Notes = Annotated[str, StringConstraints(strip_whitespace=True, max_length=5_000)]
 
 
@@ -454,12 +520,14 @@ class StaffCreate(Change):
     staff_id: RecordId | None = None
     name: Name
     role: Name
+    email: StaffEmail | None = None
 
 
 class StaffUpdate(Update):
     not_null = frozenset({"name", "role"})
     name: Name | None = None
     role: Name | None = None
+    email: StaffEmail | None = None
 
 
 class EpisodeCreate(Change):
@@ -480,15 +548,17 @@ class EpisodeUpdate(Update):
 
 
 class VisitCreate(Change):
+    """One encounter in an episode: a consultation, a test, or a treatment."""
+
     visit_id: RecordId | None = None
     episode_id: RecordId  # the visit's patient is the episode's patient
-    staff_id: RecordId | None = None
+    staff_id: RecordId  # every visit is carried out by a staff member
     visit_date: date
     notes: Notes | None = None
 
 
 class VisitUpdate(Update):
-    not_null = frozenset({"visit_date"})
+    not_null = frozenset({"staff_id", "visit_date"})
     staff_id: RecordId | None = None
     visit_date: date | None = None
     notes: Notes | None = None
@@ -498,18 +568,23 @@ class FollowUpCreate(Change):
     followup_id: RecordId | None = None
     visit_id: RecordId
     action_type: ActionType
-    due_date: date
-    assigned_staff_id: RecordId | None = None
+    due_date: date | None = None  # omit until scheduled; the follow-up is then unassigned
+    assigned_staff_id: RecordId  # every follow-up has a responsible staff member
+    notes: Notes | None = None
 
 
 class FollowUpUpdate(Update):
-    """status "done" records completed_at now; "open" clears it. Null unassigns staff."""
+    """A status change records completed_at ("done" or "closed") or clears it ("open").
+    Every change of status, scheduled date, or staff member adds a followup_history row
+    in the same transaction. "closed" needs a reason in notes. A null due_date removes the
+    scheduled date (unassigned). The staff member can change but never be removed."""
 
-    not_null = frozenset({"action_type", "due_date", "status"})
+    not_null = frozenset({"action_type", "assigned_staff_id", "status"})
     action_type: ActionType | None = None
     due_date: date | None = None
     assigned_staff_id: RecordId | None = None
     status: FollowUpStatus | None = None
+    notes: Notes | None = None
 
 
 # --- Natural-language questions -----------------------------------------------

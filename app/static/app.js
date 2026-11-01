@@ -3,8 +3,8 @@
 // Single-page UI over the predefined search/change APIs and the read-only /api/ask.
 // The browser only sends filter values, record fields, or a question; never SQL.
 
-const PAGE_SIZE = 25;
-const state = { options: null, type: "patients", offset: 0, total: 0, requestId: 0, drawer: [] };
+const PAGE_SIZES = [25, 100, 500];
+const state = { session: null, options: null, type: "patients", offset: 0, total: 0, pageSize: PAGE_SIZES[0], requestId: 0, drawer: [] };
 const $ = (id) => document.getElementById(id);
 
 // --- DOM and formatting helpers (text is always set as text, never as HTML) ---
@@ -36,6 +36,7 @@ function countBadge(count, cls) {
 }
 
 function dueText(days) {
+  if (days === null || days === undefined) return "not scheduled";
   if (days === 0) return "today";
   return days < 0 ? `${-days}d late` : `in ${days}d`;
 }
@@ -57,21 +58,93 @@ class ApiError extends Error {
   }
 }
 
-async function api(method, path, { params = {}, body } = {}) {
+function apiUrl(path, params = {}) {
   const url = new URL(path, window.location.origin);
   for (const [key, value] of Object.entries(params)) {
     if (Array.isArray(value)) value.forEach((item) => url.searchParams.append(key, item));
     else if (value !== undefined && value !== null && value !== "") url.searchParams.set(key, value);
   }
+  return url;
+}
+
+async function api(method, path, { params = {}, body } = {}) {
+  const url = apiUrl(path, params);
   const response = await fetch(url, {
     method,
     headers: body ? { "Content-Type": "application/json" } : {},
     body: body ? JSON.stringify(body) : undefined,
   });
+  if (response.status === 204) return null;  // no content, e.g. after signing out
   const isJson = (response.headers.get("content-type") || "").includes("json");
   const data = isJson ? await response.json() : await response.text();
-  if (!response.ok) throw new ApiError(response.status, data);
+  if (!response.ok) {
+    const error = new ApiError(response.status, data);
+    if (error.code === "not_signed_in" && state.session) showSignIn();  // session ended, e.g. after a restart
+    throw error;
+  }
   return data;
+}
+
+// --- Sign-in: staff email only in this release -------------------------------------
+
+const isManager = () => Boolean(state.session && state.session.is_manager);
+
+function showSignIn() {
+  state.session = null;
+  for (const id of ["dashboard", "tabs", "records-view", "ask-view", "report-link", "session"]) $(id).hidden = true;
+  document.querySelector("main").hidden = true;
+  $("sign-in").hidden = false;
+  $("sign-in-email").focus();
+}
+
+async function signIn(event) {
+  event.preventDefault();
+  try {
+    await api("POST", "/api/session", { body: { email: $("sign-in-email").value.trim() } });
+    window.location.reload();
+  } catch (error) {
+    $("sign-in-error").textContent = error.message;
+    $("sign-in-error").hidden = false;
+  }
+}
+
+async function signOut() {
+  await api("DELETE", "/api/session");
+  window.location.reload();
+}
+
+// --- Importing a file (managers): all of it, or nothing --------------------------------
+
+async function importFile(file) {
+  const show = (...content) => { $("import-result").replaceChildren(...content); $("import-dialog").showModal(); };
+  let data;
+  try {
+    data = JSON.parse(await file.text());
+  } catch {
+    return show(h("h2", {}, "File rejected"), h("p", {}, `${file.name} is not valid JSON. Nothing was saved.`));
+  }
+  const response = await fetch("/api/import", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data),
+  });
+  const body = await response.json();
+  if (response.ok) {
+    show(h("h2", {}, `Imported ${file.name}`),
+      h("p", {}, Object.entries(body.counts).map(([table, count]) => `${count} ${table}`).join(", ")));
+    return afterChange();
+  }
+  if (body.rejections) {
+    const rows = body.rejections.map((r) => ({ kind: words(r.kind), record_id: r.record_id, reason: r.reason }));
+    const table = h("table", { class: "sheet" });
+    renderTable(table, [column("kind", "Record"), column("record_id", "ID"), column("reason", "Reason", { wrap: true })], rows, null);
+    return show(h("h2", {}, `${file.name} was rejected: nothing was saved`),
+      h("p", { class: "muted" }, `Fix these ${rows.length} problem(s) and import the whole file again.`),
+      h("div", { class: "table-wrap" }, table));
+  }
+  show(h("h2", {}, "File rejected"), h("p", {}, new ApiError(response.status, body).message));
+}
+
+function updateReportLink() {
+  $("report-link").href = `/report?as_of_date=${encodeURIComponent(asOf())}`;
 }
 
 let toastTimer;
@@ -228,10 +301,13 @@ function recordForm(type, record, prefill = {}) {
   return form;
 }
 
-async function setFollowupStatus(followupId, status) {
+const STATUS_MESSAGES = { done: "marked done", closed: "closed", open: "reopened" };
+
+async function setFollowupStatus(followupId, status, notes) {
   try {
-    await api("PATCH", `/api/followups/${followupId}`, { params: { as_of_date: asOf() }, body: { status } });
-    toast(status === "done" ? `${followupId} marked done.` : `${followupId} reopened.`);
+    const body = notes ? { status, notes } : { status };
+    await api("PATCH", `/api/followups/${followupId}`, { params: { as_of_date: asOf() }, body });
+    toast(`${followupId} ${STATUS_MESSAGES[status]}.`);
     await afterChange();
     refreshDrawer();
   } catch (error) {
@@ -240,13 +316,42 @@ async function setFollowupStatus(followupId, status) {
 }
 
 function statusButton(item) {
-  const done = item.status === "done";
+  const finished = item.status !== "open";
   return h("button", {
     type: "button",
     class: "small",
-    onclick: (event) => { event.stopPropagation(); setFollowupStatus(item.followup_id, done ? "open" : "done"); },
-  }, done ? "Reopen" : "Mark done");
+    onclick: (event) => { event.stopPropagation(); setFollowupStatus(item.followup_id, finished ? "open" : "done"); },
+  }, finished ? "Reopen" : "Mark done");
 }
+
+// Closing means the follow-up could not be completed, so the clinic records why.
+function askClosingReason(followupId) {
+  const reason = window.prompt(`Why is ${followupId} being closed? (for example: patient unreachable, did not return)`);
+  return reason && reason.trim() ? reason.trim() : null;
+}
+
+function statusSelect(item) {
+  return h("select", {
+    class: `status-select ${item.status}`,
+    "aria-label": `Status of ${item.followup_id}`,
+    onclick: (event) => event.stopPropagation(),
+    onchange: (event) => {
+      const status = event.target.value;
+      if (status !== "closed") return setFollowupStatus(item.followup_id, status);
+      const reason = askClosingReason(item.followup_id);
+      if (reason) return setFollowupStatus(item.followup_id, status, reason);
+      event.target.value = item.status;  // no reason given: nothing changes
+    },
+  }, state.options.followup_statuses.map((status) => h("option", { value: status, selected: status === item.status }, words(status))));
+}
+
+// Row tint for at-a-glance checking: the most urgent state wins.
+function followupRowClass(item) {
+  if (item.status !== "open") return "row-closed";
+  for (const flag of ["overdue", "due_soon", "unassigned"]) if (item.flags.includes(flag)) return `row-${flag}`;
+  return "";
+}
+const summaryRowClass = (row) => (row.overdue_followups ? "row-overdue" : row.due_soon_followups ? "row-due_soon" : "");
 
 // --- Record types: columns, filters, and form fields -----------------------------
 
@@ -258,12 +363,13 @@ const TYPES = {
     title: "Patients",
     singular: "Patient",
     id: "patient_id",
+    rowClass: summaryRowClass,
     describe: (p) => `${p.patient_id} · ${p.name}`,
     columns: [
       column("patient_id", "ID"), column("name"), column("phone"), column("email"),
       number("visit_count", "Visits"), number("open_followups", "Open"),
       column("overdue_followups", "Overdue", { num: true, render: (r) => countBadge(r.overdue_followups, "overdue") }),
-      column("next_due_date", "Next due"), column("last_visit_date", "Last visit"),
+      column("next_due_date", "Next scheduled"), column("last_visit_date", "Last visit"),
     ],
     filters: () => [
       select("staff_id", "Seen by or assigned to", staffOptions),
@@ -274,7 +380,7 @@ const TYPES = {
       slider("overdue_followups_min", "Overdue follow-ups, at least", 20),
       slider("visit_count_min", "Visits, at least", 50),
       dates("last_visit", "Last visit between"),
-      dates("next_due", "Next due between"),
+      dates("next_due", "Next scheduled between"),
     ],
     form: [
       field("patient_id", "ID (leave empty to generate)", { createOnly: true }),
@@ -291,29 +397,28 @@ const TYPES = {
     columns: [
       column("followup_id", "ID"), column("patient_name", "Patient"),
       column("action_type", "Action", { render: (r) => badge(r.action_type, "") }),
-      column("due_date", "Due"),
+      column("due_date", "Scheduled"),
       column("days_until_due", "When", { render: (r) => (r.status === "open" ? dueText(r.days_until_due) : "—") }),
-      column("status", "Status", { render: (r) => badge(r.status) }),
+      column("status", "Status", { render: statusSelect }),
       column("flags", "Flags", { render: flagBadges }),
       column("assigned_staff_name", "Assigned to"), column("visit_staff_name", "Seen by"),
-      column("action", "", { render: statusButton }),
     ],
+    rowClass: followupRowClass,
     filters: () => [
       select("preset", "Quick filter", () => state.options.presets.map((p) => [p.name, p.label])),
       checks("action_type", "Action type", () => valuesOf(state.options.action_types)),
       checks("status", "Status", () => valuesOf(state.options.followup_statuses)),
       checks("flag", "Flags", () => valuesOf(state.options.followup_flags)),
       select("assigned_staff_id", "Assigned to", staffOptions),
-      yesNo("unassigned", "Unassigned"),
       select("visit_staff_id", "Seen by", staffOptions),
       checks("assigned_staff_role", "Assigned staff role", () => valuesOf(state.options.staff_roles)),
       select("episode_status", "Episode", () => valuesOf(state.options.episode_statuses)),
       text("patient_name", "Patient name"),
       text("notes", "Visit notes contain"),
-      slider("due_within_days", "Due within", 90, "d"),
+      slider("due_within_days", "Scheduled within", 90, "d"),
       slider("days_overdue_min", "Overdue by at least", 180, "d"),
       slider("completed_within_days", "Completed within the last", 90, "d"),
-      dates("due", "Due between"),
+      dates("due", "Scheduled between"),
       dates("visit", "Visit between"),
       dates("completed", "Completed between"),
     ],
@@ -321,15 +426,17 @@ const TYPES = {
       field("followup_id", "ID (leave empty to generate)", { createOnly: true }),
       field("visit_id", "Visit", { required: true, createOnly: true, reference: "visits" }),
       field("action_type", "Action type", { required: true, options: () => valuesOf(state.options.action_types) }),
-      field("due_date", "Due date", { type: "date", required: true }),
-      field("assigned_staff_id", "Assigned to", { options: staffOptions }),
+      field("due_date", "Scheduled date (leave empty while unassigned)", { type: "date" }),
+      field("assigned_staff_id", "Assigned to", { required: true, options: staffOptions }),
       field("status", "Status", { editOnly: true, required: true, options: () => valuesOf(state.options.followup_statuses) }),
+      field("notes", "Notes (required reason when closed)", { type: "textarea" }),
     ],
   },
   visits: {
     title: "Visits",
     singular: "Visit",
     id: "visit_id",
+    rowClass: summaryRowClass,
     describe: (v) => `${v.visit_id} · ${v.visit_date} · ${v.patient_name}`,
     columns: [
       column("visit_id", "ID"), column("visit_date", "Date"), column("patient_name", "Patient"),
@@ -353,7 +460,7 @@ const TYPES = {
       field("visit_id", "ID (leave empty to generate)", { createOnly: true }),
       field("episode_id", "Episode", { required: true, createOnly: true, reference: "episodes" }),
       field("visit_date", "Visit date", { type: "date", required: true }),
-      field("staff_id", "Seen by", { options: staffOptions }),
+      field("staff_id", "Seen by", { required: true, options: staffOptions }),
       field("notes", "Notes", { type: "textarea" }),
     ],
   },
@@ -361,6 +468,7 @@ const TYPES = {
     title: "Episodes",
     singular: "Episode",
     id: "episode_id",
+    rowClass: summaryRowClass,
     describe: (e) => `${e.episode_id} · ${e.patient_name} · ${e.description}`,
     columns: [
       column("episode_id", "ID"), column("patient_name", "Patient"), column("description", "Description", { wrap: true }),
@@ -392,12 +500,13 @@ const TYPES = {
     title: "Staff",
     singular: "Staff member",
     id: "staff_id",
+    rowClass: summaryRowClass,
     describe: (s) => `${s.staff_id} · ${s.name}`,
     columns: [
-      column("staff_id", "ID"), column("name"), column("role"), number("visit_count", "Visits"),
+      column("staff_id", "ID"), column("name"), column("role"), column("email"), number("visit_count", "Visits"),
       number("patient_count", "Patients"), number("open_followups", "Open follow-ups"),
       column("overdue_followups", "Overdue", { num: true, render: (r) => countBadge(r.overdue_followups, "overdue") }),
-      column("next_due_date", "Next due"),
+      column("next_due_date", "Next scheduled"),
     ],
     filters: () => [
       checks("role", "Role", () => valuesOf(state.options.staff_roles)),
@@ -409,7 +518,8 @@ const TYPES = {
     form: [
       field("staff_id", "ID (leave empty to generate)", { createOnly: true }),
       field("name", "Name", { required: true }),
-      field("role", "Role", { required: true }),
+      field("role", "Role (manager sees every follow-up)", { required: true }),
+      field("email", "Email (used to sign in)", { type: "email" }),
     ],
   },
 };
@@ -424,23 +534,27 @@ function renderFilters() {
   $("filter-form").replaceChildren(...config.filters().map(filterControl));
   $("search-text").value = "";
   $("sort-select").replaceChildren(h("option", { value: "" }, "Default"),
-    state.options.sorts[state.type].map((sort) =>
+    ...state.options.sorts[state.type].map((sort) =>
       h("option", { value: sort }, `${words(sort)}${sort.startsWith("-") ? ", descending" : ""}`)));
   $("new-record").textContent = `New ${config.singular.toLowerCase()}`;
 }
 
+// The list and its CSV download use the same filters, search text, sort, and date.
+const listParams = () => ({
+  ...filterParams(), q: $("search-text").value.trim(), sort: $("sort-select").value, as_of_date: asOf(),
+});
+
 async function loadResults() {
   const config = TYPES[state.type];
   const requestId = ++state.requestId;
-  const params = {
-    ...filterParams(), q: $("search-text").value.trim(), sort: $("sort-select").value,
-    limit: PAGE_SIZE, offset: state.offset, as_of_date: asOf(),
-  };
+  const params = { ...listParams(), limit: state.pageSize, offset: state.offset };
   try {
     const page = await api("GET", `/api/${state.type}`, { params });
     if (requestId !== state.requestId) return;  // a newer search already started
     state.total = page.total;
-    renderTable($("results-table"), config.columns, page.items, (row) => openDetail(state.type, row[config.id]));
+    renderTable($("results-table"), config.columns, page.items, (row) => openDetail(state.type, row[config.id]), {
+      rowClass: config.rowClass, sorts: state.options.sorts[state.type], sort: $("sort-select").value, onSort: sortBy,
+    });
     const last = Math.min(page.offset + page.items.length, page.total);
     $("result-count").textContent = `${page.total} ${page.total === 1 ? "result" : "results"}`;
     $("page-info").textContent = page.total ? `${page.offset + 1}–${last} of ${page.total}` : "";
@@ -451,18 +565,52 @@ async function loadResults() {
   }
 }
 
-function renderTable(table, columns, rows, onOpen) {
-  const head = h("thead", {}, h("tr", {}, columns.map((c) => h("th", { class: c.num ? "num" : "" }, c.label))));
+function headerCell(c, { sorts = [], sort = "", onSort } = {}) {
+  const sortable = onSort && (sorts.includes(c.key) || sorts.includes(`-${c.key}`));
+  if (!sortable) return h("th", { class: c.num ? "num" : "" }, c.label);
+  const arrow = sort === c.key ? " ▲" : sort === `-${c.key}` ? " ▼" : "";
+  return h("th", { class: `sortable ${c.num ? "num" : ""}`, "aria-sort": arrow ? (arrow === " ▲" ? "ascending" : "descending") : null },
+    h("button", { type: "button", class: "sort", onclick: () => onSort(c.key) }, c.label, arrow));
+}
+
+function renderTable(table, columns, rows, onOpen, options = {}) {
+  const head = h("thead", {}, h("tr", {}, columns.map((c) => headerCell(c, options))));
   const body = h("tbody", {});
   if (!rows.length) {
     body.append(h("tr", {}, h("td", { colspan: columns.length, class: "empty" }, "No matching records.")));
   }
   for (const row of rows) {
-    body.append(h("tr", { class: onOpen ? "clickable" : "", onclick: onOpen ? () => onOpen(row) : null },
+    const tint = options.rowClass ? options.rowClass(row) : "";
+    body.append(h("tr", { class: [onOpen && "clickable", tint].filter(Boolean).join(" "), onclick: onOpen ? () => onOpen(row) : null },
       columns.map((c) => h("td", { class: [c.num && "num", c.wrap && "wrap"].filter(Boolean).join(" ") },
         c.render ? c.render(row) : show(row[c.key])))));
   }
   table.replaceChildren(head, body);
+}
+
+// Click a header to sort by it; click again for the reverse order when it exists.
+function sortBy(key) {
+  const sorts = state.options.sorts[state.type];
+  const current = $("sort-select").value;
+  let next = current === key ? `-${key}` : key;
+  if (!sorts.includes(next)) next = sorts.includes(key) ? key : `-${key}`;
+  $("sort-select").value = next;
+  state.offset = 0;
+  loadResults();
+}
+
+async function downloadCsv() {
+  try {
+    const response = await fetch(apiUrl(`/api/${state.type}/export`, listParams()));
+    if (!response.ok) throw new ApiError(response.status, await response.json().catch(() => null));
+    const name = /filename="([^"]+)"/.exec(response.headers.get("content-disposition") || "");
+    const link = h("a", { href: URL.createObjectURL(await response.blob()), download: name ? name[1] : `${state.type}.csv` });
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+    toast(`Downloaded ${state.total} ${state.total === 1 ? "row" : "rows"}.`);
+  } catch (error) {
+    showError(error);
+  }
 }
 
 let searchTimer;
@@ -480,24 +628,47 @@ function facts(pairs) {
 const openLink = (type, id, label = id) =>
   h("button", { type: "button", class: "link", onclick: () => openDetail(type, id) }, label);
 
-const addButton = (type, label, prefill) =>
-  h("button", { type: "button", class: "small", onclick: () => openCreate(type, prefill) }, label);
+// Only a manager adds or edits records; other staff edit the follow-ups assigned to them.
+const addButton = (type, label, prefill) => isManager()
+  ? h("button", { type: "button", class: "small", onclick: () => openCreate(type, prefill) }, label)
+  : null;
 
 function editSection(type, record) {
+  if (!isManager() && type !== "followups") return null;
   return h("details", {}, h("summary", {}, `Edit ${TYPES[type].singular.toLowerCase()}`), recordForm(type, record));
+}
+
+const HISTORY_FIELDS = { status: "Status", due_date: "Scheduled date", assigned_staff_id: "Staff" };
+
+function historyValue(field, value) {
+  if (value === null) return field === "due_date" ? "not scheduled" : "—";
+  if (field === "status") return words(value);
+  if (field === "assigned_staff_id") {
+    const member = state.options.staff.find((s) => s.staff_id === value);
+    return member ? member.name : value;
+  }
+  return value;
+}
+
+function historyLine(change) {
+  const when = change.changed_at.replace("T", " ").replace("Z", " UTC");
+  const by = change.changed_by_name ? ` · by ${change.changed_by_name}` : "";
+  return h("li", {},
+    `${when} · ${HISTORY_FIELDS[change.field]}: ${historyValue(change.field, change.old_value)} → ${historyValue(change.field, change.new_value)}${by}`,
+    change.note ? h("span", { class: "muted" }, ` · ${change.note}`) : null);
 }
 
 function followupLine(f) {
   return h("div", { class: "followup-line" },
     openLink("followups", f.followup_id), badge(f.action_type, ""), badge(f.status),
-    h("span", {}, `Due ${f.due_date} · ${f.assigned_staff_name || "Unassigned"} `, flagBadges(f)),
+    h("span", {}, `${f.due_date ? `Scheduled ${f.due_date}` : "Not scheduled"} · ${f.assigned_staff_name} `, flagBadges(f)),
     statusButton(f));
 }
 
 function visitBlock(v) {
   return h("div", { class: "history" },
     h("div", { class: "row-line" }, openLink("visits", v.visit_id), h("span", { class: "grow" },
-      `${v.visit_date} · ${v.staff_name || "No staff"}${v.notes ? ` · ${v.notes}` : ""}`),
+      `${v.visit_date} · ${v.staff_name}${v.notes ? ` · ${v.notes}` : ""}`),
       addButton("followups", "Add follow-up", { visit_id: v.visit_id })),
     (v.followups || []).map(followupLine));
 }
@@ -551,10 +722,14 @@ const DETAIL = {
     facts([["ID", d.followup.followup_id], ["Patient", openLink("patients", d.followup.patient_id, d.followup.patient_name)],
       ["Visit", openLink("visits", d.followup.visit_id, `${d.followup.visit_id} · ${d.followup.visit_date}`)],
       ["Episode", openLink("episodes", d.followup.episode_id, d.followup.episode_description)],
-      ["Action", badge(d.followup.action_type, "")], ["Due", `${d.followup.due_date} (${dueText(d.followup.days_until_due)})`],
+      ["Action", badge(d.followup.action_type, "")], ["Scheduled", d.followup.due_date ? `${d.followup.due_date} (${dueText(d.followup.days_until_due)})` : "Not scheduled"],
       ["Status", h("span", {}, badge(d.followup.status), " ", statusButton(d.followup))],
       ["Flags", flagBadges(d.followup)], ["Assigned to", d.followup.assigned_staff_name],
-      ["Completed at", d.followup.completed_at]]),
+      ["Done or closed at", d.followup.completed_at], ["Notes", d.followup.notes]]),
+    h("h3", {}, "History"),
+    d.history.length
+      ? h("ol", { class: "status-history" }, d.history.map(historyLine))
+      : h("p", { class: "muted" }, "No changes yet."),
     editSection("followups", d.followup),
     h("h3", {}, "Other follow-ups for this episode"),
     d.episode_followups.length ? d.episode_followups.map(followupLine) : h("p", { class: "muted" }, "None."),
@@ -613,8 +788,8 @@ async function loadDashboard() {
     }, h("strong", {}, value), h("span", {}, label));
     $("dashboard").replaceChildren(
       card(d.followups.overdue_followups, "Overdue follow-ups", "alert", "followups", { preset: "overdue" }),
-      card(d.followups.due_soon_followups, `Due in ${state.options ? state.options.due_soon_days : 7} days`, "warn", "followups", { preset: "due_soon" }),
-      card(d.followups.unassigned_followups, "Unassigned", "warn", "followups", { preset: "unassigned" }),
+      card(d.followups.due_soon_followups, "Due soon", "warn", "followups", { preset: "due_soon" }),
+      card(d.followups.unassigned_followups, "Unassigned (no date)", "warn", "followups", { preset: "unassigned" }),
       card(d.followups.open_followups, "Open follow-ups", "", "followups", { status: ["open"] }),
       card(d.completed_last_7_days, "Completed, last 7 days", "", "followups", { preset: "completed_last_7_days" }),
       card(d.patients, "Patients", "", "patients", {}),
@@ -654,8 +829,6 @@ async function ask(question) {
       h("div", { class: "row-line" }, badge(answer.decision.intent),
         h("span", { class: "muted" }, `confidence ${answer.decision.confidence.toFixed(2)} · change probability ${answer.decision.modify_probability.toFixed(2)}`)),
       h("p", { class: "explanation" }, answer.explanation),
-      h("details", {}, h("summary", {}, "SQL that was run (read only)"),
-        h("pre", {}, answer.sql), h("pre", {}, `parameters: ${JSON.stringify(answer.parameters)}`)),
       h("div", { class: "table-wrap" }, table),
       h("p", { class: "muted" }, `${answer.result.row_count} rows${answer.result.truncated ? " (truncated)" : ""}`)));
   } catch (error) {
@@ -680,6 +853,7 @@ function switchTab(type, filters = null) {
   for (const button of $("tabs").children) button.setAttribute("aria-selected", String(button.dataset.tab === type));
   $("ask-view").hidden = type !== "ask";
   $("records-view").hidden = type === "ask";
+  $("records-view").dataset.type = type;
   if (type === "ask") return;
   renderFilters();
   if (filters) setFilters(filters);
@@ -688,7 +862,32 @@ function switchTab(type, filters = null) {
 
 async function start() {
   $("as-of-date").value = new Date().toLocaleDateString("en-CA");  // YYYY-MM-DD in local time
-  $("tabs").replaceChildren(...TABS.map(([tab, label]) =>
+  $("sign-in-form").addEventListener("submit", signIn);
+  try {
+    state.session = await api("GET", "/api/session");
+  } catch (error) {
+    if (error.status === 401) return showSignIn();
+    $("dashboard").replaceChildren(h("p", { class: "notice" }, error.message));
+    return;
+  }
+  const { name, role } = state.session;
+  $("session-name").textContent = `${name} (${role})`;
+  $("session").hidden = false;
+  $("report-link").hidden = false;
+  updateReportLink();
+  $("sign-out").addEventListener("click", signOut);
+  $("new-record").hidden = !isManager();
+  $("import-button").hidden = !isManager();
+  $("import-button").addEventListener("click", () => $("import-input").click());
+  $("import-input").addEventListener("change", async () => {
+    const [file] = $("import-input").files;
+    $("import-input").value = "";
+    if (file) await importFile(file);
+  });
+
+  const tabs = TABS;
+  if (!isManager()) $("ask-scope").hidden = false;
+  $("tabs").replaceChildren(...tabs.map(([tab, label]) =>
     h("button", { type: "button", role: "tab", "data-tab": tab, onclick: () => switchTab(tab) }, label)));
   $("ask-examples").replaceChildren(...EXAMPLES.map((example) => h("button", {
     type: "button", onclick: () => { $("ask-question").value = example; ask(example); },
@@ -700,8 +899,11 @@ async function start() {
   $("search-text").addEventListener("input", searchSoon);
   $("sort-select").addEventListener("change", searchSoon);
   $("clear-filters").addEventListener("click", () => { renderFilters(); searchSoon(); });
-  $("prev-page").addEventListener("click", () => { state.offset = Math.max(0, state.offset - PAGE_SIZE); loadResults(); });
-  $("next-page").addEventListener("click", () => { state.offset += PAGE_SIZE; loadResults(); });
+  $("prev-page").addEventListener("click", () => { state.offset = Math.max(0, state.offset - state.pageSize); loadResults(); });
+  $("next-page").addEventListener("click", () => { state.offset += state.pageSize; loadResults(); });
+  $("page-size").replaceChildren(...PAGE_SIZES.map((size) => h("option", { value: size }, size)));
+  $("page-size").addEventListener("change", () => { state.pageSize = Number($("page-size").value); state.offset = 0; loadResults(); });
+  $("download-csv").addEventListener("click", downloadCsv);
   $("new-record").addEventListener("click", () => openCreate(state.type));
   $("drawer-close").addEventListener("click", () => { state.drawer = []; renderDrawer(); });
   $("drawer-back").addEventListener("click", () => { state.drawer.pop(); renderDrawer(); });
@@ -714,6 +916,7 @@ async function start() {
     if (question) ask(question);
   });
   $("as-of-date").addEventListener("change", async () => {
+    updateReportLink();
     await afterChange();
     refreshDrawer();
   });
@@ -726,7 +929,7 @@ async function start() {
   }
   loadDashboard();
   const requested = window.location.hash.slice(1);
-  switchTab(TABS.some(([tab]) => tab === requested) ? requested : "patients");
+  switchTab(tabs.some(([tab]) => tab === requested) ? requested : isManager() ? "patients" : "followups");
 }
 
 start();

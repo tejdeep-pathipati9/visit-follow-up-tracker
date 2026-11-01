@@ -1,5 +1,6 @@
 """Load and validate the JSON settings file (allowed action types and due-soon window)."""
 
+from functools import cache
 import json
 from pathlib import Path
 from typing import Annotated
@@ -70,3 +71,9 @@ def load_settings(path: str | Path = DEFAULT_SETTINGS_PATH) -> Settings:
             for problem in error.errors()
         )
         raise SettingsError(f"Invalid settings in {path}: {problems}") from None
+
+
+@cache
+def app_settings() -> Settings:
+    """The settings the running app uses, read once from the default file."""
+    return load_settings()

@@ -24,7 +24,10 @@ DEFAULT_VISITS = 40
 BAD_VISIT_ID = "VBAD00"  # a valid visit that carries the bad follow-ups
 
 ACTION_TYPES = ("lab", "referral", "recheck")
-CLOSURE_REASONS = ("completed", "patient_declined", "unable_to_reach", "appointment_cancelled")
+# A closed follow-up could not be completed; the clinic records why in its notes.
+CLOSING_REASONS = (
+    "Patient unreachable after three calls", "Patient did not return", "Patient did not provide results",
+)
 
 FIRST_NAMES = ("Avery", "Blake", "Casey", "Devon", "Emery", "Finley", "Harper", "Jordan", "Kendall", "Logan")
 LAST_NAMES = ("Testwell", "Samplewood", "Exampleton", "Mockley", "Demoson", "Fakeman", "Placeholder", "Dummerfield")
@@ -38,14 +41,18 @@ NOTES = (
 )
 
 # Scenario data, built from fixed offsets (in days) from --as-of. Each follow-up is listed with the
-# flags it must get under the shipped settings (lab 7, referral 14, recheck 14 days), so the
-# boundaries are written down once and tested against the real rules.
+# flags it must get under the shipped settings (lab 3, referral 14, recheck 14 days), so the
+# boundaries are written down once and tested against the real rules. Every follow-up has a staff
+# member; "unassigned" means it has no scheduled date yet.
+# (staff, name, role, sign-in email); the manager sees every follow-up and owns none here.
 STAFF = (
-    ("S001", "Dr. Alder Example", "doctor"),
-    ("S002", "Nurse Birch Sample", "nurse"),
-    ("S003", "Dr. Cedar Testcase", "doctor"),
-    ("S004", "Coordinator Dune Mock", "coordinator"),
+    ("S001", "Dr. Alder Example", "doctor", "alder.example@clinic.example.test"),
+    ("S002", "Nurse Birch Sample", "nurse", "birch.sample@clinic.example.test"),
+    ("S003", "Dr. Cedar Testcase", "doctor", "cedar.testcase@clinic.example.test"),
+    ("S004", "Coordinator Dune Mock", "coordinator", "dune.mock@clinic.example.test"),
+    ("S005", "Manager Elm Overseer", "manager", "elm.overseer@clinic.example.test"),
 )
+CARE_STAFF = tuple(member[0] for member in STAFF if member[2] != "manager")
 PATIENTS = (
     ("P001", "Avery Testwell", "555-0101", "avery.testwell@example.test"),
     ("P002", "Blake Samplewood", None, None),
@@ -63,29 +70,30 @@ EPISODES = (
     ("E006", "P005", "Synthetic blood pressure check", [("V009", "S001", -2)]),
 )
 CLOSED_EPISODES = {"E002"}
-# (follow-up, visit, action, due offset, staff, expected flags, closure, note)
-# closure is None for an open follow-up, else (completed offset, reason or None).
+# (follow-up, visit, action, due offset or None, staff, expected flags, outcome, note)
+# outcome is None for an open follow-up, else ("done" or "closed", offset of the completion time).
+# A closed follow-up's note is the reason it could not be completed.
 SCENARIOS = (
-    ("F001", "V001", "lab", -50, "S001", [], (-48, "completed"), None),  # closed and long past due: no flag
-    ("F002", "V001", "referral", -30, None, ["overdue", "unassigned"], None, "Patient prefers morning calls"),
+    ("F001", "V001", "lab", -50, "S001", [], ("done", -48), None),  # done and long past due: no flag
+    ("F002", "V001", "referral", -30, "S002", ["overdue"], None, "Patient prefers morning calls"),
     ("F003", "V002", "recheck", -10, "S002", ["overdue"], None, None),
     ("F004", "V002", "lab", -1, "S001", ["overdue"], None, None),  # due yesterday: overdue
     ("F005", "V003", "lab", 0, "S001", ["due_soon"], None, None),  # due today: still due soon
-    ("F006", "V003", "referral", 0, None, ["due_soon", "unassigned"], None, "Referral letter not yet sent"),
-    ("F007", "V004", "lab", 7, "S002", ["due_soon"], None, None),  # last day of the lab window
-    ("F008", "V004", "lab", 8, "S002", [], None, None),  # one day outside the lab window
+    ("F006", "V003", "referral", None, "S003", ["unassigned"], None, "Referral letter not yet sent"),
+    ("F007", "V004", "lab", 3, "S002", ["due_soon"], None, None),  # last day of the lab window
+    ("F008", "V004", "lab", 4, "S002", [], None, None),  # one day outside the lab window
     ("F009", "V005", "referral", 14, "S003", ["due_soon"], None, None),  # last day of the referral window
     ("F010", "V005", "referral", 15, "S003", [], None, None),
     ("F011", "V006", "recheck", 14, "S001", ["due_soon"], None, None),  # last day of the recheck window
     ("F012", "V006", "recheck", 15, "S001", [], None, None),
-    ("F013", "V007", "lab", 3, None, ["due_soon", "unassigned"], None, None),
-    ("F014", "V007", "recheck", 60, "S002", [], None, None),  # assigned and far away: no flags
-    ("F015", "V008", "referral", 30, None, ["unassigned"], None, None),
-    ("F016", "V005", "lab", -20, "S003", [], (-22, "patient_declined"), "Patient said they will arrange it"),
-    ("F017", "V009", "recheck", 5, None, [], (-1, "unable_to_reach"), "Three call attempts, no answer"),
-    ("F018", "V009", "referral", -2, "S001", [], (-2, "appointment_cancelled"), "Clinic closed that day"),
-    ("F019", "V009", "lab", 10, "S002", [], (-1, "completed"), None),
-    ("F020", "V008", "lab", -5, "S004", [], (-5, None), None),  # closed without a reason
+    ("F013", "V007", "lab", None, "S004", ["unassigned"], None, None),  # waiting for a date
+    ("F014", "V007", "recheck", 60, "S002", [], None, None),  # scheduled and far away: no flags
+    ("F015", "V008", "referral", None, "S003", ["unassigned"], None, None),
+    ("F016", "V005", "lab", -20, "S003", [], ("closed", -22), "Patient did not return for the blood draw"),
+    ("F017", "V009", "recheck", 5, "S004", [], ("closed", -1), "Patient unreachable after three calls"),
+    ("F018", "V009", "referral", -2, "S001", [], ("closed", -2), "Patient did not provide the specialist's results"),
+    ("F019", "V009", "lab", 10, "S002", [], ("done", -1), None),
+    ("F020", "V008", "lab", None, "S004", [], ("done", -5), None),  # done before a date was ever set
 )
 EXPECTED_FLAGS = {scenario[0]: scenario[5] for scenario in SCENARIOS}
 MIN_VISITS = sum(len(visits) for *_, visits in EPISODES)
@@ -131,7 +139,7 @@ def build_clean(rng: random.Random, as_of: date, visits: int) -> dict:
         {"patient_id": pid, "name": name, **({"phone": phone} if phone else {}), **({"email": email} if email else {})}
         for pid, name, phone, email in PATIENTS
     ]
-    staff = [{"staff_id": sid, "name": name, "role": role} for sid, name, role in STAFF]
+    staff = [{"staff_id": sid, "name": name, "role": role, "email": email} for sid, name, role, email in STAFF]
     episodes, visit_records, visit_by_id = [], [], {}
     for episode_id, patient_id, description, episode_visits in EPISODES:
         first = min(offset for *_, offset in episode_visits)
@@ -148,15 +156,14 @@ def build_clean(rng: random.Random, as_of: date, visits: int) -> dict:
             }
             visit_records.append(record)
             visit_by_id[visit_id] = record
-    for followup_id, visit_id, action, due, staff_id, _, closure, note in SCENARIOS:
+    for followup_id, visit_id, action, due, staff_id, _, outcome, note in SCENARIOS:
         followup = {
-            "followup_id": followup_id, "action_type": action, "due_date": at(due).isoformat(),
-            "assigned_staff_id": staff_id, "status": "open" if closure is None else "closed",
+            "followup_id": followup_id, "action_type": action,
+            "due_date": None if due is None else at(due).isoformat(),
+            "assigned_staff_id": staff_id, "status": "open" if outcome is None else outcome[0],
         }
-        if closure is not None:
-            followup["completed_at"] = timestamp(at(closure[0]))
-            if closure[1] is not None:
-                followup["closure_reason"] = closure[1]
+        if outcome is not None:
+            followup["completed_at"] = timestamp(at(outcome[1]))
         if note:
             followup["notes"] = note
         visit_by_id[visit_id]["followups"].append(followup)
@@ -189,23 +196,24 @@ def build_clean(rng: random.Random, as_of: date, visits: int) -> dict:
             episodes.append(episode)
             filler.append((patient_id, episode))
         offset = -rng.randint(0, 120)
-        staff_id = None if rng.random() < 0.15 else rng.choice(STAFF)[0]
+        staff_id = rng.choice(CARE_STAFF)
         followups = []
         for _ in range(rng.randint(1, 3)):
             followup_count += 1
             due = offset + rng.randint(0, 60)  # never before the visit
             followup = {
                 "followup_id": f"F{followup_count:03d}", "action_type": rng.choice(ACTION_TYPES),
-                "due_date": at(due).isoformat(),
-                "assigned_staff_id": None if rng.random() < 0.25 else rng.choice(STAFF)[0],
+                "due_date": None if rng.random() < 0.15 else at(due).isoformat(),  # None: unassigned
+                "assigned_staff_id": rng.choice(CARE_STAFF),
                 "status": "open",
             }
-            if rng.random() < 0.2:
-                followup["status"] = "closed"
+            finished = rng.random()
+            if finished < 0.25:
+                followup["status"] = "done" if finished < 0.15 else "closed"
                 followup["completed_at"] = timestamp(at(rng.randint(offset, 0)))
-                if rng.random() < 0.75:
-                    followup["closure_reason"] = rng.choice(CLOSURE_REASONS)
-            if rng.random() < 0.2:
+            if followup["status"] == "closed":
+                followup["notes"] = rng.choice(CLOSING_REASONS)
+            elif rng.random() < 0.2:
                 followup["notes"] = rng.choice(NOTES)
             followups.append(followup)
         visit_records.append({
@@ -241,12 +249,15 @@ def build_bad_rows(clean: dict, as_of: date) -> tuple[dict, tuple[BadCase, ...]]
         }, "unknown", "followup_id", "Missing identifier: the rejection cannot name the record."),
         BadCase("followup", {
             "followup_id": "FBAD04", "action_type": "lab", "due_date": day(5),
-            "assigned_staff_id": "S001", "status": "closed",
+            "assigned_staff_id": "S001", "status": "closed", "notes": "Patient did not return",
         }, "FBAD04", "completed_at", "Closed without a closure time."),
         BadCase("followup", {
             "followup_id": "FBAD05", "action_type": "lab", "due_date": day(5), "assigned_staff_id": "S001",
-            "status": "open", "closure_reason": "completed",
-        }, "FBAD05", "closure_reason", "A closure reason on a follow-up that is still open."),
+            "status": "closed", "completed_at": timestamp(as_of),
+        }, "FBAD05", "notes", "Closed without saying why: the clinic records the reason in notes."),
+        BadCase("followup", {
+            "followup_id": "FBAD06", "action_type": "recheck", "due_date": day(5), "status": "open",
+        }, "FBAD06", "assigned_staff_id", "No staff member: every follow-up from a visit has one."),
     ]
     cases = (
         BadCase("patient", {"patient_id": "PBAD01"}, "PBAD01", "name", "Patient without a name."),

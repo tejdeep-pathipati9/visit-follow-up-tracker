@@ -14,28 +14,36 @@ from typing import get_args
 
 from app import repository
 from app.constants import (
-    ALLOWED_ACTION_TYPES, DUE_SOON_DAYS, EPISODE_STATUSES, FOLLOWUP_FLAGS, FOLLOWUP_STATUSES,
+    ALLOWED_ACTION_TYPES, EPISODE_STATUSES, FOLLOWUP_FLAGS, FOLLOWUP_STATUSES,
 )
+from app.ingestion.settings import app_settings
 from app.models import (
     Dashboard, DateRange, EpisodeSearch, EpisodeSort, EpisodeSummary, FollowUpCounts,
     FollowUpFilters, FollowUpGroup, FollowUpItem, FollowUpSearch, FollowUpSort, FollowUpStats,
     FollowUpStatsQuery, Page, PatientSearch, PatientSort, PatientSummary, PresetOption,
     QueryRequest, SearchOptions, SQLValue, StaffOption, StaffSearch, StaffSort, StaffSummary,
-    StatsGroup, VisitSearch, VisitSort, VisitSummary,
+    FollowUpChange, StatsGroup, VisitSearch, VisitSort, VisitSummary,
 )
-from app.rules import calculate_flags, due_soon_end
+from app.rules import build_rules, calculate_flags, due_soon_end
 
 MAX_ROWS = 1_000
+
+# Due-soon window in days for each action type, from config/settings.json.
+DUE_SOON_WINDOWS = app_settings().due_soon_days_by_action
+FLAG_RULES = build_rules(DUE_SOON_WINDOWS)
 
 FOLLOWUP_PRESETS: dict[str, tuple[str, dict[str, object]]] = {
     "overdue": ("Overdue", {"flag": ["overdue"]}),
     "overdue_30_plus": ("Overdue 30+ days", {"days_overdue_min": 30}),
     "due_today": ("Due today", {"status": ["open"], "due_within_days": 0}),
-    "due_soon": (f"Due within {DUE_SOON_DAYS} days", {"flag": ["due_soon"]}),
+    "due_soon": (
+        "Due soon (" + ", ".join(f"{action} {days}d" for action, days in DUE_SOON_WINDOWS.items()) + ")",
+        {"flag": ["due_soon"]},
+    ),
     "due_this_week": ("Due within 7 days", {"status": ["open"], "due_within_days": 7}),
     "due_next_30_days": ("Due within 30 days", {"status": ["open"], "due_within_days": 30}),
-    "unassigned": ("Unassigned", {"flag": ["unassigned"]}),
-    "unassigned_overdue": ("Unassigned and overdue", {"flag": ["overdue"], "unassigned": True}),
+    "unassigned": ("Unassigned (no scheduled date)", {"flag": ["unassigned"]}),
+    "closed": ("Closed without completion", {"status": ["closed"]}),
     "open_labs": ("Open labs", {"status": ["open"], "action_type": ["lab"]}),
     "open_referrals": ("Open referrals", {"status": ["open"], "action_type": ["referral"]}),
     "open_rechecks": ("Open rechecks", {"status": ["open"], "action_type": ["recheck"]}),
@@ -45,16 +53,16 @@ FOLLOWUP_PRESETS: dict[str, tuple[str, dict[str, object]]] = {
 }
 
 FOLLOWUP_SORTS: dict[str, str] = {
-    "due_date": "r.due_date, r.followup_id",
-    "-due_date": "r.due_date DESC, r.followup_id",
+    "due_date": "r.due_date IS NULL, r.due_date, r.followup_id",
+    "-due_date": "r.due_date IS NULL, r.due_date DESC, r.followup_id",
     "visit_date": "r.visit_date, r.followup_id",
     "-visit_date": "r.visit_date DESC, r.followup_id",
-    "patient_name": "r.patient_name, r.due_date, r.followup_id",
-    "-patient_name": "r.patient_name DESC, r.due_date, r.followup_id",
-    "assigned_staff_name": "r.assigned_staff_name IS NULL, r.assigned_staff_name, r.due_date, r.followup_id",
-    "-assigned_staff_name": "r.assigned_staff_name IS NULL, r.assigned_staff_name DESC, r.due_date, r.followup_id",
-    "action_type": "r.action_type, r.due_date, r.followup_id",
-    "status": "r.status DESC, r.due_date, r.followup_id",
+    "patient_name": "r.patient_name, r.due_date IS NULL, r.due_date, r.followup_id",
+    "-patient_name": "r.patient_name DESC, r.due_date IS NULL, r.due_date, r.followup_id",
+    "assigned_staff_name": "r.assigned_staff_name, r.due_date IS NULL, r.due_date, r.followup_id",
+    "-assigned_staff_name": "r.assigned_staff_name DESC, r.due_date IS NULL, r.due_date, r.followup_id",
+    "action_type": "r.action_type, r.due_date IS NULL, r.due_date, r.followup_id",
+    "status": "r.status DESC, r.due_date IS NULL, r.due_date, r.followup_id",
     "completed_at": "r.completed_at IS NULL, r.completed_at, r.followup_id",
     "-completed_at": "r.completed_at IS NULL, r.completed_at DESC, r.followup_id",
     "followup_id": "r.followup_id",
@@ -102,14 +110,14 @@ EPISODE_SORTS: dict[str, str] = {
 FOLLOWUP_GROUPS: dict[str, tuple[str, str, bool]] = {
     "action_type": ("r.action_type", "r.action_type", False),
     "status": ("r.status", "r.status", False),
-    "assigned_staff": ("r.assigned_staff_id", "COALESCE(r.assigned_staff_name, 'Unassigned')", False),
-    "assigned_staff_role": ("r.assigned_staff_role", "COALESCE(r.assigned_staff_role, 'Unassigned')", False),
-    "visit_staff": ("r.visit_staff_id", "COALESCE(r.visit_staff_name, 'Unknown')", False),
+    "assigned_staff": ("r.assigned_staff_id", "r.assigned_staff_name", False),
+    "assigned_staff_role": ("r.assigned_staff_role", "r.assigned_staff_role", False),
+    "visit_staff": ("r.visit_staff_id", "r.visit_staff_name", False),
     "patient": ("r.patient_id", "r.patient_name", False),
     "episode": ("r.episode_id", "r.episode_description", False),
-    "due_date": ("r.due_date", "r.due_date", True),
-    "due_week": ("strftime('%Y-W%W', r.due_date)", "strftime('%Y-W%W', r.due_date)", True),
-    "due_month": ("substr(r.due_date, 1, 7)", "substr(r.due_date, 1, 7)", True),
+    "due_date": ("r.due_date", "COALESCE(r.due_date, 'Not scheduled')", True),
+    "due_week": ("strftime('%Y-W%W', r.due_date)", "COALESCE(strftime('%Y-W%W', r.due_date), 'Not scheduled')", True),
+    "due_month": ("substr(r.due_date, 1, 7)", "COALESCE(substr(r.due_date, 1, 7), 'Not scheduled')", True),
     "visit_month": ("substr(r.visit_date, 1, 7)", "substr(r.visit_date, 1, 7)", True),
     "completed_month": ("substr(r.completed_at, 1, 7)", "substr(r.completed_at, 1, 7)", True),
 }
@@ -120,15 +128,31 @@ for literal, names in (
 ):
     assert set(get_args(literal)) == set(names), f"{literal} and its SQL mapping differ"
 
-# Follow-up counts per group; `f` is the followups table and :as_of/:soon_end are bound.
+# Last due-soon day for the follow-up's action type; Where binds :soon_type_N/:soon_end_N.
+SOON_END_SQL = "CASE {f}.action_type " + " ".join(
+    f"WHEN :soon_type_{index} THEN :soon_end_{index}" for index in range(len(DUE_SOON_WINDOWS))
+) + " END"
+
+
+def rule_params(as_of: date) -> dict[str, SQLValue]:
+    params: dict[str, SQLValue] = {"as_of": as_of.isoformat()}
+    for index, (action_type, days) in enumerate(DUE_SOON_WINDOWS.items()):
+        params[f"soon_type_{index}"] = action_type
+        params[f"soon_end_{index}"] = due_soon_end(as_of, days).isoformat()
+    return params
+
+
+# Follow-up counts per group; `f` is the followups table and rule_params() are bound.
 COUNT_COLUMNS = {
     "followup_count": "COUNT({f}.followup_id)",
     "open_followups": "COALESCE(SUM({f}.status = 'open'), 0)",
     "done_followups": "COALESCE(SUM({f}.status = 'done'), 0)",
+    "closed_followups": "COALESCE(SUM({f}.status = 'closed'), 0)",
     "overdue_followups": "COALESCE(SUM({f}.status = 'open' AND {f}.due_date < :as_of), 0)",
     "due_today_followups": "COALESCE(SUM({f}.status = 'open' AND {f}.due_date = :as_of), 0)",
-    "due_soon_followups": "COALESCE(SUM({f}.status = 'open' AND {f}.due_date BETWEEN :as_of AND :soon_end), 0)",
-    "unassigned_followups": "COALESCE(SUM({f}.status = 'open' AND {f}.assigned_staff_id IS NULL), 0)",
+    "due_soon_followups": "COALESCE(SUM({f}.status = 'open' AND {f}.due_date BETWEEN :as_of AND "
+                          + SOON_END_SQL + "), 0)",
+    "unassigned_followups": "COALESCE(SUM({f}.status = 'open' AND {f}.due_date IS NULL), 0)",
     "next_due_date": "MIN(CASE WHEN {f}.status = 'open' THEN {f}.due_date END)",
 }
 FLAG_COUNT_COLUMNS = {
@@ -148,9 +172,16 @@ def joined_counts_sql(alias: str) -> str:
     )
 
 
-FOLLOWUP_BASE = """
-WITH base AS (
-    SELECT f.followup_id, f.status, f.action_type, f.due_date, f.completed_at,
+# Every search reads these instead of the tables (see repository.SCOPED_ROWS). With
+# :scope_staff NULL (a manager), every row is visible; otherwise only the staff member's
+# follow-ups and their patients' records, so counts include only their own follow-ups.
+SCOPE = "WITH " + ",\n".join(
+    f"{table} AS ({repository.scoped_rows(table, ':scope_staff')})" for table in repository.SCOPED_ROWS
+)
+
+FOLLOWUP_BASE = SCOPE + """,
+base AS (
+    SELECT f.followup_id, f.status, f.action_type, f.due_date, f.completed_at, f.notes,
            f.visit_id, v.visit_date, v.notes AS visit_notes,
            v.patient_id, p.name AS patient_name,
            v.episode_id, e.description AS episode_description, e.closed_at AS episode_closed_at,
@@ -165,8 +196,8 @@ WITH base AS (
 )
 """
 
-PATIENT_BASE = f"""
-WITH visit_stats AS (
+PATIENT_BASE = SCOPE + f""",
+visit_stats AS (
     SELECT patient_id, COUNT(*) AS visit_count,
            MIN(visit_date) AS first_visit_date, MAX(visit_date) AS last_visit_date
     FROM visits GROUP BY patient_id
@@ -190,8 +221,8 @@ WITH visit_stats AS (
 )
 """
 
-STAFF_BASE = f"""
-WITH visit_stats AS (
+STAFF_BASE = SCOPE + f""",
+visit_stats AS (
     SELECT staff_id, COUNT(*) AS visit_count, COUNT(DISTINCT patient_id) AS patient_count,
            MAX(visit_date) AS last_visit_date
     FROM visits WHERE staff_id IS NOT NULL GROUP BY staff_id
@@ -200,7 +231,7 @@ WITH visit_stats AS (
     FROM followups f WHERE f.assigned_staff_id IS NOT NULL
     GROUP BY f.assigned_staff_id
 ), base AS (
-    SELECT s.staff_id, s.name, s.role,
+    SELECT s.staff_id, s.name, s.role, s.email,
            COALESCE(vs.visit_count, 0) AS visit_count,
            COALESCE(vs.patient_count, 0) AS patient_count, vs.last_visit_date,
            {joined_counts_sql("fs")}
@@ -210,8 +241,8 @@ WITH visit_stats AS (
 )
 """
 
-VISIT_BASE = f"""
-WITH followup_stats AS (
+VISIT_BASE = SCOPE + f""",
+followup_stats AS (
     SELECT f.visit_id, {counts_sql("f")}
     FROM followups f GROUP BY f.visit_id
 ), base AS (
@@ -227,8 +258,8 @@ WITH followup_stats AS (
 )
 """
 
-EPISODE_BASE = f"""
-WITH visit_stats AS (
+EPISODE_BASE = SCOPE + f""",
+visit_stats AS (
     SELECT episode_id, COUNT(*) AS visit_count,
            MIN(visit_date) AS first_visit_date, MAX(visit_date) AS last_visit_date
     FROM visits GROUP BY episode_id
@@ -258,11 +289,9 @@ def shift(day: date, days: int) -> date:
 class Where:
     """Collect AND-ed conditions on `base r` with automatically named parameters."""
 
-    def __init__(self, as_of: date):
+    def __init__(self, as_of: date, scope: str | None = None):
         self.clauses: list[str] = []
-        self.params: dict[str, SQLValue] = {
-            "as_of": as_of.isoformat(), "soon_end": due_soon_end(as_of).isoformat(),
-        }
+        self.params: dict[str, SQLValue] = {**rule_params(as_of), "scope_staff": scope}
 
     def bind(self, value: SQLValue | date) -> str:
         name = f"p{len(self.params)}"
@@ -298,7 +327,9 @@ class Where:
 
 
 def fetch(connection: sqlite3.Connection, sql: str, params: dict[str, SQLValue], max_rows: int = MAX_ROWS) -> list[dict]:
-    result = repository.execute_query(connection, QueryRequest(query=sql, parameters=params, max_rows=max_rows))
+    result = repository.execute_query(
+        connection, QueryRequest(query=sql, parameters=params, max_rows=max_rows), built_in=True,
+    )
     return [dict(zip(result.columns, row)) for row in result.rows]
 
 
@@ -364,8 +395,8 @@ def followup_where(filters: FollowUpFilters, where: Where) -> None:
         # Same definitions as app/rules; only open follow-ups carry flags.
         conditions = {
             "overdue": "r.due_date < :as_of",
-            "due_soon": "r.due_date BETWEEN :as_of AND :soon_end",
-            "unassigned": "r.assigned_staff_id IS NULL",
+            "due_soon": "r.due_date BETWEEN :as_of AND " + SOON_END_SQL.format(f="r"),
+            "unassigned": "r.due_date IS NULL",
         }
         where.add("r.status = 'open' AND (" + " OR ".join(conditions[flag] for flag in filters.flag) + ")")
     if filters.staff_id:
@@ -376,8 +407,6 @@ def followup_where(filters: FollowUpFilters, where: Where) -> None:
     where.any_of("r.assigned_staff_id", filters.assigned_staff_id)
     where.contains(filters.assigned_staff_name, "r.assigned_staff_name")
     where.any_of("r.assigned_staff_role", filters.assigned_staff_role)
-    if filters.unassigned is not None:
-        where.add(f"r.assigned_staff_id IS {'' if filters.unassigned else 'NOT '}NULL")
     where.any_of("r.visit_staff_id", filters.visit_staff_id)
     where.contains(filters.visit_staff_name, "r.visit_staff_name")
     where.any_of("r.visit_staff_role", filters.visit_staff_role)
@@ -402,13 +431,24 @@ def followup_where(filters: FollowUpFilters, where: Where) -> None:
 
 
 def to_followup(row: dict, as_of: date) -> FollowUpItem:
-    item = FollowUpItem(**row, days_until_due=(date.fromisoformat(row["due_date"]) - as_of).days)
-    item.flags = calculate_flags(item, as_of)
+    due = row["due_date"]
+    item = FollowUpItem(**row, days_until_due=None if due is None else (date.fromisoformat(due) - as_of).days)
+    item.flags = calculate_flags(item, as_of, FLAG_RULES)
     return item
 
 
-def search_followups(connection: sqlite3.Connection, search: FollowUpSearch) -> Page[FollowUpItem]:
-    where = Where(search.as_of_date)
+def followup_history(connection: sqlite3.Connection, followup_id: str) -> list[FollowUpChange]:
+    rows = fetch(connection, """
+        SELECT h.change_id, h.field, h.old_value, h.new_value, h.changed_at, h.changed_by,
+               s.name AS changed_by_name, h.note
+        FROM followup_history h LEFT JOIN staff s ON s.staff_id = h.changed_by
+        WHERE h.followup_id = :followup_id ORDER BY h.changed_at, h.change_id
+    """, {"followup_id": followup_id})
+    return [FollowUpChange(**row) for row in rows]
+
+
+def search_followups(connection: sqlite3.Connection, search: FollowUpSearch, scope: str | None = None) -> Page[FollowUpItem]:
+    where = Where(search.as_of_date, scope)
     followup_where(search, where)
     rows, total = page(connection, FOLLOWUP_BASE, where, FOLLOWUP_SORTS[search.sort], search.limit, search.offset)
     return Page[FollowUpItem](
@@ -417,8 +457,8 @@ def search_followups(connection: sqlite3.Connection, search: FollowUpSearch) -> 
     )
 
 
-def followup_stats(connection: sqlite3.Connection, query: FollowUpStatsQuery) -> FollowUpStats:
-    where = Where(query.as_of_date)
+def followup_stats(connection: sqlite3.Connection, query: FollowUpStatsQuery, scope: str | None = None) -> FollowUpStats:
+    where = Where(query.as_of_date, scope)
     followup_where(query, where)
     condition = where.sql()
     counts = counts_sql("r")
@@ -439,8 +479,8 @@ def followup_stats(connection: sqlite3.Connection, query: FollowUpStatsQuery) ->
 
 # --- Patients, staff, visits, episodes ----------------------------------------
 
-def search_patients(connection: sqlite3.Connection, search: PatientSearch) -> Page[PatientSummary]:
-    where = Where(search.as_of_date)
+def search_patients(connection: sqlite3.Connection, search: PatientSearch, scope: str | None = None) -> Page[PatientSummary]:
+    where = Where(search.as_of_date, scope)
     where.contains(search.q, "r.patient_id", "r.name", "r.phone", "r.email")
     where.any_of("r.patient_id", search.patient_id)
     where.contains(search.name, "r.name")
@@ -461,9 +501,11 @@ def search_patients(connection: sqlite3.Connection, search: PatientSearch) -> Pa
     )
 
 
-def search_staff(connection: sqlite3.Connection, search: StaffSearch) -> Page[StaffSummary]:
-    where = Where(search.as_of_date)
-    where.contains(search.q, "r.staff_id", "r.name")
+def search_staff(connection: sqlite3.Connection, search: StaffSearch, scope: str | None = None) -> Page[StaffSummary]:
+    where = Where(search.as_of_date, scope)
+    if scope is not None:
+        where.add("r.staff_id = :scope_staff")  # staff see their own workload only
+    where.contains(search.q, "r.staff_id", "r.name", "r.email")
     where.any_of("r.staff_id", search.staff_id)
     where.any_of("r.role", search.role)
     where.flagged(search.flag)
@@ -477,8 +519,8 @@ def search_staff(connection: sqlite3.Connection, search: StaffSearch) -> Page[St
     )
 
 
-def search_visits(connection: sqlite3.Connection, search: VisitSearch) -> Page[VisitSummary]:
-    where = Where(search.as_of_date)
+def search_visits(connection: sqlite3.Connection, search: VisitSearch, scope: str | None = None) -> Page[VisitSummary]:
+    where = Where(search.as_of_date, scope)
     where.contains(
         search.q, "r.visit_id", "r.patient_id", "r.patient_name", "r.staff_name",
         "r.episode_description", "r.notes",
@@ -507,8 +549,8 @@ def search_visits(connection: sqlite3.Connection, search: VisitSearch) -> Page[V
     )
 
 
-def search_episodes(connection: sqlite3.Connection, search: EpisodeSearch) -> Page[EpisodeSummary]:
-    where = Where(search.as_of_date)
+def search_episodes(connection: sqlite3.Connection, search: EpisodeSearch, scope: str | None = None) -> Page[EpisodeSummary]:
+    where = Where(search.as_of_date, scope)
     where.contains(search.q, "r.episode_id", "r.patient_id", "r.patient_name", "r.description")
     where.any_of("r.episode_id", search.episode_id)
     where.any_of("r.patient_id", search.patient_id)
@@ -532,14 +574,14 @@ def search_episodes(connection: sqlite3.Connection, search: EpisodeSearch) -> Pa
 
 # --- Dashboard and dropdown options -------------------------------------------
 
-def dashboard(connection: sqlite3.Connection, as_of: date) -> Dashboard:
-    where = Where(as_of)
+def dashboard(connection: sqlite3.Connection, as_of: date, scope: str | None = None) -> Dashboard:
+    where = Where(as_of, scope)
     params = {
         **where.params,
         "week_start": shift(as_of, -7).isoformat(),
         "month_start": shift(as_of, -30).isoformat(),
     }
-    followups = fetch(connection, f"SELECT {counts_sql('f')} FROM followups f", params)[0]
+    followups = fetch(connection, f"{SCOPE} SELECT {counts_sql('f')} FROM followups f", params)[0]
     row = fetch(connection, f"""
         {PATIENT_BASE},
         staff_overdue AS (
@@ -577,7 +619,7 @@ def options(connection: sqlite3.Connection, as_of: date) -> SearchOptions:
     """, {})[0]
     return SearchOptions(
         as_of_date=as_of,
-        due_soon_days=DUE_SOON_DAYS,
+        due_soon_days_by_action=DUE_SOON_WINDOWS,
         action_types=list(ALLOWED_ACTION_TYPES),
         followup_statuses=list(FOLLOWUP_STATUSES),
         followup_flags=list(FOLLOWUP_FLAGS),

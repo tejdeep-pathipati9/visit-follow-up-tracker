@@ -12,6 +12,7 @@ from app.models import (
     Change, EpisodeCreate, EpisodeUpdate, FollowUpCreate, FollowUpUpdate, PatientCreate,
     PatientUpdate, StaffCreate, StaffUpdate, VisitCreate, VisitUpdate,
 )
+from app.ingestion.loader import ExistingRecords, ImportBatch
 from app.repository import QueryError
 
 # kind: (label, table, id column, ID prefix)
@@ -98,12 +99,23 @@ def update_patient(connection: sqlite3.Connection, patient_id: str, body: Patien
     update(connection, "patient", patient_id, body.changes())
 
 
+def check_email_free(connection: sqlite3.Connection, email: str | None, staff_id: str | None = None) -> None:
+    """Each sign-in email belongs to one staff member."""
+    if email is None:
+        return
+    row = connection.execute("SELECT staff_id FROM staff WHERE email = ?", [email]).fetchone()
+    if row is not None and row["staff_id"] != staff_id:
+        raise QueryError("already_exists", f"Staff member {row['staff_id']} already uses {email}.", 409)
+
+
 def create_staff(connection: sqlite3.Connection, body: StaffCreate) -> str:
+    check_email_free(connection, body.email)
     return insert(connection, "staff", body)
 
 
 def update_staff(connection: sqlite3.Connection, staff_id: str, body: StaffUpdate) -> None:
     existing(connection, "staff", staff_id)
+    check_email_free(connection, body.email, staff_id)
     update(connection, "staff", staff_id, body.changes())
 
 
@@ -138,13 +150,111 @@ def create_followup(connection: sqlite3.Connection, body: FollowUpCreate) -> str
     return insert(connection, "followup", body, status="open")
 
 
-def update_followup(connection: sqlite3.Connection, followup_id: str, body: FollowUpUpdate) -> None:
+TRACKED_FIELDS = ("status", "due_date", "assigned_staff_id")
+
+
+def update_followup(
+    connection: sqlite3.Connection, followup_id: str, body: FollowUpUpdate,
+    scope: str | None = None, changed_by: str | None = None,
+) -> None:
+    """Change a follow-up in the caller's transaction, with one followup_history row for each
+    tracked field that changes. With a scope, only a follow-up assigned to that staff member
+    can change."""
     followup = existing(connection, "followup", followup_id)
+    if scope is not None and followup["assigned_staff_id"] != scope:
+        raise QueryError("not_found", f"Follow-up {followup_id} was not found.", 404)
     referenced(connection, "staff", body.assigned_staff_id)
     values = body.changes()
-    # completed_at is server-controlled: set when a follow-up becomes done, cleared when reopened.
-    if values.get("status") == "done" and followup["status"] != "done":
-        values["completed_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    elif values.get("status") == "open":
-        values["completed_at"] = None
+    new_status = values.get("status", followup["status"])
+    notes = values.get("notes", followup["notes"])
+    if new_status == "closed" and not (notes or "").strip():
+        raise QueryError("invalid_change", "Closing a follow-up needs a reason in notes, such as 'patient unreachable'.")
+    changed = [
+        (field, followup[field], stored(values[field])) for field in TRACKED_FIELDS
+        if field in values and stored(values[field]) != followup[field]
+    ]
+    changed_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    if new_status != followup["status"]:
+        # completed_at is server-controlled: when it became done or closed, cleared when reopened.
+        values["completed_at"] = None if new_status == "open" else changed_at
     update(connection, "followup", followup_id, values)
+    note = values.get("notes") or (notes if new_status == "closed" else None)
+    for field, old_value, new_value in changed:
+        connection.execute(
+            "INSERT INTO followup_history (followup_id, field, old_value, new_value, changed_at, changed_by, note)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?)",
+            [followup_id, field, old_value, new_value, changed_at, changed_by, note],
+        )
+
+
+# --- Importing a file: every record of a checked batch in the caller's transaction. ---
+
+# Table and the record fields saved for each list in an ImportBatch, parents first.
+BATCH_TABLES = (
+    ("patients", "patients"), ("staff", "staff"), ("episodes", "episodes"),
+    ("visits", "visits"), ("followups", "followups"),
+)
+
+
+def existing_records(connection: sqlite3.Connection) -> ExistingRecords:
+    def ids(table: str, column: str) -> frozenset[str]:
+        return frozenset(row[0] for row in connection.execute(f"SELECT {column} FROM {table}"))
+
+    return ExistingRecords(
+        patients=ids("patients", "patient_id"),
+        staff=ids("staff", "staff_id"),
+        staff_emails=frozenset(row[0] for row in connection.execute("SELECT lower(email) FROM staff WHERE email IS NOT NULL")),
+        episodes=dict(connection.execute("SELECT episode_id, patient_id FROM episodes").fetchall()),
+        visits=ids("visits", "visit_id"),
+        followups=ids("followups", "followup_id"),
+    )
+
+
+def save_batch(connection: sqlite3.Connection, batch: ImportBatch) -> dict[str, int]:
+    """Insert a batch with no rejections, parents before children; returns counts per table.
+    The caller commits, or rolls back on any error, so a failed save leaves nothing."""
+    assert not batch.rejections, "only a batch without rejections is saved"
+    counts = {}
+    for attribute, table in BATCH_TABLES:
+        records = getattr(batch, attribute)
+        for record in records:
+            values = record.model_dump()
+            columns = list(values)
+            connection.execute(
+                f"INSERT INTO {table} ({', '.join(columns)}) VALUES ({', '.join('?' for _ in columns)})",
+                [stored(values[column]) for column in columns],
+            )
+        counts[table] = len(records)
+    return counts
+
+
+# --- Retention: the clinic keeps records for RETENTION_YEARS, then deletes them. ------
+
+def retention_cutoff(as_of: date, years: int) -> date:
+    """The same day `years` earlier (28 February for 29 February)."""
+    try:
+        return as_of.replace(year=as_of.year - years)
+    except ValueError:
+        return as_of.replace(year=as_of.year - years, day=28)
+
+
+def delete_older_than(connection: sqlite3.Connection, cutoff: date) -> dict[str, int]:
+    """Delete visits before the cutoff with their follow-ups and history, then the episodes
+    and patients those deletions leave with no visits. Staff are kept. Runs in the caller's
+    transaction; returns how many rows each table lost."""
+    params = {"cutoff": cutoff.isoformat()}
+    connection.execute("CREATE TEMP TABLE old_visits AS SELECT visit_id, episode_id, patient_id FROM visits WHERE visit_date < :cutoff", params)
+    try:
+        steps = (
+            ("followup_history", "DELETE FROM followup_history WHERE followup_id IN "
+                                 "(SELECT followup_id FROM followups WHERE visit_id IN (SELECT visit_id FROM old_visits))"),
+            ("followups", "DELETE FROM followups WHERE visit_id IN (SELECT visit_id FROM old_visits)"),
+            ("visits", "DELETE FROM visits WHERE visit_id IN (SELECT visit_id FROM old_visits)"),
+            ("episodes", "DELETE FROM episodes WHERE episode_id IN (SELECT episode_id FROM old_visits)"
+                         " AND episode_id NOT IN (SELECT episode_id FROM visits)"),
+            ("patients", "DELETE FROM patients WHERE patient_id IN (SELECT patient_id FROM old_visits)"
+                         " AND patient_id NOT IN (SELECT patient_id FROM episodes)"),
+        )
+        return {table: connection.execute(sql).rowcount for table, sql in steps}
+    finally:
+        connection.execute("DROP TABLE temp.old_visits")

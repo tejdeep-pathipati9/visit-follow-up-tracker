@@ -2,7 +2,11 @@
 
 Every rule gets the reference date from its caller and never reads the clock, so the
 same input and date always give the same flags. Rules read only `status`, `due_date`
-and `assigned_staff_id`, so they work on ingestion records and on database rows alike.
+and `action_type`, so they work on ingestion records and on database rows alike.
+
+`due_date` is the scheduled date. A follow-up without one is "unassigned" (not yet
+scheduled); "unassigned" never means a missing staff owner. Overdue and due soon are
+evaluated only when a date exists, so neither can apply together with unassigned.
 """
 
 from abc import ABC, abstractmethod
@@ -17,8 +21,7 @@ from app.ingestion.settings import Settings
 class FollowUpLike(Protocol):
     status: str
     action_type: str  # read only when the due-soon window depends on the action type
-    due_date: date
-    assigned_staff_id: str | None
+    due_date: date | None  # the scheduled date; None until one is set
 
 
 def check_date(as_of_date: object) -> date:
@@ -34,10 +37,15 @@ def due_soon_end(as_of_date: date, days: int = DUE_SOON_DAYS) -> date:
 
 class FollowUpRule(ABC):
     flag: FollowUpFlag
+    # Date rules only see follow-ups that have a scheduled date.
+    needs_date = True
 
     def applies(self, followup: FollowUpLike, as_of_date: date) -> bool:
         """Only open follow-ups are flagged; closed ones are finished and never flagged."""
-        return followup.status == "open" and self.matches(followup, check_date(as_of_date))
+        as_of_date = check_date(as_of_date)
+        if followup.status != "open" or (self.needs_date and followup.due_date is None):
+            return False
+        return self.matches(followup, as_of_date)
 
     @abstractmethod
     def matches(self, followup: FollowUpLike, as_of_date: date) -> bool:
@@ -91,10 +99,13 @@ class DueSoonRule(FollowUpRule):
 
 
 class UnassignedRule(FollowUpRule):
+    """No scheduled date yet. Whether a staff member is assigned does not matter."""
+
     flag: FollowUpFlag = "unassigned"
+    needs_date = False
 
     def matches(self, followup: FollowUpLike, as_of_date: date) -> bool:
-        return followup.assigned_staff_id is None
+        return followup.due_date is None
 
 
 def build_rules(due_soon_days: int | Mapping[str, int] = DUE_SOON_DAYS) -> tuple[FollowUpRule, ...]:

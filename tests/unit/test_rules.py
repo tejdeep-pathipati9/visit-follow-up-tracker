@@ -23,24 +23,28 @@ def day(offset: int) -> date:
 
 
 def followup(
-    due_offset: int = 30, *, staff: str | None = "S001", status: str = "open", followup_id: str = "F001",
+    due_offset: int | None = 30, *, status: str = "open", followup_id: str = "F001",
     action_type: str = "lab",
 ):
-    """A follow-up due `due_offset` days from AS_OF; negative is in the past."""
+    """A follow-up scheduled `due_offset` days from AS_OF; negative is in the past, None is not scheduled."""
     return SimpleNamespace(
-        followup_id=followup_id, status=status, due_date=day(due_offset), assigned_staff_id=staff,
-        action_type=action_type,
+        followup_id=followup_id, status=status, due_date=None if due_offset is None else day(due_offset),
+        assigned_staff_id="S001", action_type=action_type,
     )
 
 
-def record(due_offset: int = 30, *, staff: str | None = "S001", status: str = "open", followup_id: str = "F001"):
+def record(due_offset: int | None = 30, *, status: str = "open", followup_id: str = "F001"):
     """The same follow-up built through the Step 1 validator, as the loader will produce it."""
     raw = {
         "followup_id": followup_id, "visit_id": "V001", "action_type": "lab",
-        "due_date": day(due_offset).isoformat(), "assigned_staff_id": staff, "status": status,
+        "assigned_staff_id": "S001", "status": status,
     }
-    if status == "closed":
+    if due_offset is not None:
+        raw["due_date"] = day(due_offset).isoformat()
+    if status in ("done", "closed"):
         raw["completed_at"] = "2026-10-20T12:00:00Z"
+    if status == "closed":
+        raw["notes"] = "Patient unreachable"
     result = validate_record("followup", raw)
     assert isinstance(result, FollowUpRecord)
     return result
@@ -143,9 +147,8 @@ def test_due_soon_window_depends_on_the_action_type(action_type, due_offset, exp
 def test_overdue_and_unassigned_ignore_the_action_type_windows():
     rules = build_rules(WINDOWS)
 
-    assert calculate_flags(followup(-1, staff=None, action_type="referral"), AS_OF, rules) == [
-        "overdue", "unassigned",
-    ]
+    assert calculate_flags(followup(-1, action_type="referral"), AS_OF, rules) == ["overdue"]
+    assert calculate_flags(followup(None, action_type="referral"), AS_OF, rules) == ["unassigned"]
     assert calculate_flags(followup(10, action_type="lab"), AS_OF, rules) == []
     assert calculate_flags(followup(10, action_type="recheck"), AS_OF, rules) == ["due_soon"]
 
@@ -191,22 +194,25 @@ def test_run_rules_takes_each_action_window_from_settings():
 # --- unassigned ---------------------------------------------------------------
 
 
-def test_unassigned_applies_only_without_staff():
-    assert UnassignedRule().applies(followup(staff=None), AS_OF) is True
-    assert UnassignedRule().applies(followup(staff="S001"), AS_OF) is False
+def test_unassigned_means_no_scheduled_date():
+    assert UnassignedRule().applies(followup(None), AS_OF) is True
+    assert UnassignedRule().applies(followup(30), AS_OF) is False
 
 
-def test_empty_staff_id_is_not_treated_as_unassigned():
-    # Only NULL means unassigned, the same as the database search.
-    assert UnassignedRule().applies(followup(staff=""), AS_OF) is False
+def test_follow_up_without_a_date_is_never_overdue_or_due_soon():
+    assert OverdueRule().applies(followup(None), AS_OF) is False
+    assert DueSoonRule().applies(followup(None), AS_OF) is False
+    assert DueSoonRule({"lab": 3}).applies(followup(None), AS_OF) is False
 
 
 # --- multiple flags and no flags ---------------------------------------------
 
 
-def test_follow_up_breaking_two_rules_gets_both_flags():
-    assert calculate_flags(followup(-5, staff=None), AS_OF) == ["overdue", "unassigned"]
-    assert calculate_flags(followup(2, staff=None), AS_OF) == ["due_soon", "unassigned"]
+def test_built_in_flags_never_combine():
+    for offset in [None, *range(-40, 41)]:
+        assert len(calculate_flags(followup(offset), AS_OF)) <= 1, offset
+    assert calculate_flags(followup(-5), AS_OF) == ["overdue"]
+    assert calculate_flags(followup(2), AS_OF) == ["due_soon"]
 
 
 def test_overdue_and_due_soon_never_apply_together():
@@ -216,31 +222,39 @@ def test_overdue_and_due_soon_never_apply_together():
 
 
 def test_day_with_no_flags_returns_an_empty_list():
-    assert calculate_flags(followup(30, staff="S001"), AS_OF) == []
+    assert calculate_flags(followup(30), AS_OF) == []
+
+
+class AlwaysRule(FollowUpRule):
+    flag = "always"
+    needs_date = False
+
+    def matches(self, followup, as_of_date):
+        return True
 
 
 def test_flags_follow_rule_order():
-    assert calculate_flags(followup(0, staff=None), AS_OF) == ["due_soon", "unassigned"]
+    assert calculate_flags(followup(0), AS_OF, (*build_rules(), AlwaysRule())) == ["due_soon", "always"]
+    assert calculate_flags(followup(0), AS_OF, (AlwaysRule(), *build_rules())) == ["always", "due_soon"]
 
 
 # --- closed and legacy statuses ----------------------------------------------
 
 
-@pytest.mark.parametrize("due_offset", [-30, 0, 3, 60])
-@pytest.mark.parametrize("staff", [None, "S001"])
-def test_closed_follow_up_never_gets_flags(due_offset, staff):
-    assert calculate_flags(followup(due_offset, staff=staff, status="closed"), AS_OF) == []
+@pytest.mark.parametrize("due_offset", [-30, 0, 3, 60, None])
+def test_closed_follow_up_never_gets_flags(due_offset):
+    assert calculate_flags(followup(due_offset, status="closed"), AS_OF) == []
 
 
 def test_legacy_done_status_gets_no_flags_either():
-    assert calculate_flags(followup(-30, staff=None, status="done"), AS_OF) == []
+    assert calculate_flags(followup(-30, status="done"), AS_OF) == []
 
 
 # --- the reference date is injected ------------------------------------------
 
 
 def test_same_follow_up_gets_different_flags_on_different_reference_dates():
-    item = followup(0, staff="S001")
+    item = followup(0)
 
     assert calculate_flags(item, day(-3)) == ["due_soon"]
     assert calculate_flags(item, day(-8)) == []
@@ -260,7 +274,8 @@ def test_non_date_reference_date_is_rejected(value):
 
 
 def test_rules_work_on_validated_ingestion_records():
-    assert calculate_flags(record(-2, staff=None), AS_OF) == ["overdue", "unassigned"]
+    assert calculate_flags(record(-2), AS_OF) == ["overdue"]
+    assert calculate_flags(record(None), AS_OF) == ["unassigned"]
     assert calculate_flags(record(0), AS_OF) == ["due_soon"]
     assert calculate_flags(record(0, status="closed"), AS_OF) == []
 
@@ -279,7 +294,9 @@ def test_new_rule_is_one_subclass_and_does_not_change_existing_rules():
 
     assert calculate_flags(followup(120), AS_OF, rules) == ["far_future"]
     assert calculate_flags(followup(120), AS_OF) == []
-    assert calculate_flags(followup(-5, staff=None), AS_OF, rules) == ["overdue", "unassigned"]
+    assert calculate_flags(followup(-5), AS_OF, rules) == ["overdue"]
+    # A new date rule never sees a follow-up without a scheduled date.
+    assert calculate_flags(followup(None), AS_OF, rules) == ["unassigned"]
 
 
 # --- running every rule over many follow-ups ----------------------------------
@@ -287,17 +304,19 @@ def test_new_rule_is_one_subclass_and_does_not_change_existing_rules():
 
 def test_run_rules_collects_flags_for_every_follow_up():
     items = [
-        followup(-3, staff=None, followup_id="F001"),
+        followup(-3, followup_id="F001"),
         followup(2, followup_id="F002"),
         followup(40, followup_id="F003"),
         followup(-9, status="closed", followup_id="F004"),
+        followup(None, followup_id="F005"),
     ]
 
     assert run_rules(items, AS_OF) == {
-        "F001": ["overdue", "unassigned"],
+        "F001": ["overdue"],
         "F002": ["due_soon"],
         "F003": [],
         "F004": [],
+        "F005": ["unassigned"],
     }
 
 
@@ -320,11 +339,11 @@ def test_run_rules_takes_the_due_soon_window_from_settings():
     assert run_rules(items, AS_OF) == {"F001": []}
 
 
-def test_run_rules_with_the_shipped_settings_file_uses_seven_and_fourteen_days():
+def test_run_rules_with_the_shipped_settings_file_uses_three_and_fourteen_days():
     settings = load_settings()
     items = [
-        followup(7, followup_id="L7", action_type="lab"),
-        followup(8, followup_id="L8", action_type="lab"),
+        followup(3, followup_id="L3", action_type="lab"),
+        followup(4, followup_id="L4", action_type="lab"),
         followup(14, followup_id="R14", action_type="referral"),
         followup(15, followup_id="R15", action_type="referral"),
         followup(14, followup_id="C14", action_type="recheck"),
@@ -332,12 +351,12 @@ def test_run_rules_with_the_shipped_settings_file_uses_seven_and_fourteen_days()
     ]
 
     assert run_rules(items, AS_OF, settings) == {
-        "L7": ["due_soon"], "L8": [], "R14": ["due_soon"], "R15": [], "C14": ["due_soon"], "C15": [],
+        "L3": ["due_soon"], "L4": [], "R14": ["due_soon"], "R15": [], "C14": ["due_soon"], "C15": [],
     }
 
 
 def test_run_rules_does_not_change_the_follow_ups():
-    items = [record(-3, staff=None, followup_id="F001"), record(2, followup_id="F002")]
+    items = [record(-3, followup_id="F001"), record(2, followup_id="F002")]
     before = [item.model_copy(deep=True) for item in items]
 
     run_rules(items, AS_OF)
@@ -351,6 +370,6 @@ def test_run_rules_refuses_duplicate_follow_up_ids():
 
 
 def test_running_twice_gives_the_same_answer():
-    items = [followup(-3, staff=None, followup_id="F001"), followup(2, followup_id="F002")]
+    items = [followup(-3, followup_id="F001"), followup(2, followup_id="F002")]
 
     assert run_rules(items, AS_OF) == run_rules(items, AS_OF)
