@@ -197,7 +197,7 @@ def test_follow_up_action_type_must_match_exactly(value):
 
 
 def test_action_type_outside_the_configured_settings_is_rejected():
-    settings = Settings(allowed_action_types=["lab"], due_soon_days=7)
+    settings = Settings(allowed_action_types=["lab"], due_soon_days_by_action={"lab": 7})
 
     result = reject("followup", followup(action_type="referral"), settings)
 

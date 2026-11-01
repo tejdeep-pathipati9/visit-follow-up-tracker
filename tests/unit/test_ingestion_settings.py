@@ -14,25 +14,29 @@ def write_settings(path, content):
 
 def test_loads_valid_settings(tmp_path):
     path = write_settings(
-        tmp_path / "settings.json", {"allowed_action_types": ["lab", "referral"], "due_soon_days": 14}
+        tmp_path / "settings.json",
+        {"allowed_action_types": ["lab", "referral"], "due_soon_days_by_action": {"lab": 3, "referral": 14}},
     )
 
-    assert load_settings(path) == Settings(allowed_action_types=["lab", "referral"], due_soon_days=14)
+    assert load_settings(path) == Settings(
+        allowed_action_types=["lab", "referral"], due_soon_days_by_action={"lab": 3, "referral": 14}
+    )
 
 
 def test_accepts_zero_day_window_and_string_path(tmp_path):
     path = write_settings(
-        tmp_path / "settings.json", {"allowed_action_types": ["recheck"], "due_soon_days": 0}
+        tmp_path / "settings.json",
+        {"allowed_action_types": ["recheck"], "due_soon_days_by_action": {"recheck": 0}},
     )
 
-    assert load_settings(str(path)).due_soon_days == 0
+    assert load_settings(str(path)).due_soon_days_by_action == {"recheck": 0}
 
 
 def test_repository_default_settings_file_is_valid():
     settings = load_settings(DEFAULT_SETTINGS_PATH)
 
     assert settings.allowed_action_types == ["lab", "referral", "recheck"]
-    assert settings.due_soon_days == 7
+    assert settings.due_soon_days_by_action == {"lab": 7, "referral": 14, "recheck": 14}
 
 
 def test_missing_file_names_the_path(tmp_path):
@@ -79,22 +83,33 @@ def test_json_that_is_not_an_object_is_rejected(tmp_path, content):
         load_settings(path)
 
 
+WINDOWS = {"lab": 7}
+
+
 @pytest.mark.parametrize(
     ("content", "field"),
     [
-        ({"due_soon_days": 7}, "allowed_action_types"),
-        ({"allowed_action_types": ["lab"]}, "due_soon_days"),
-        ({"allowed_action_types": [], "due_soon_days": 7}, "allowed_action_types"),
-        ({"allowed_action_types": ["lab", "lab"], "due_soon_days": 7}, "allowed_action_types"),
-        ({"allowed_action_types": ["surgery"], "due_soon_days": 7}, "allowed_action_types"),
-        ({"allowed_action_types": "lab", "due_soon_days": 7}, "allowed_action_types"),
-        ({"allowed_action_types": ["lab"], "due_soon_days": -1}, "due_soon_days"),
-        ({"allowed_action_types": ["lab"], "due_soon_days": 366}, "due_soon_days"),
-        ({"allowed_action_types": ["lab"], "due_soon_days": "7"}, "due_soon_days"),
-        ({"allowed_action_types": ["lab"], "due_soon_days": 7.5}, "due_soon_days"),
-        ({"allowed_action_types": ["lab"], "due_soon_days": True}, "due_soon_days"),
-        ({"allowed_action_types": ["lab"], "due_soon_days": None}, "due_soon_days"),
-        ({"allowed_action_types": ["lab"], "due_soon_days": 7, "extra": 1}, "extra"),
+        ({"due_soon_days_by_action": WINDOWS}, "allowed_action_types"),
+        ({"allowed_action_types": ["lab"]}, "due_soon_days_by_action"),
+        ({"allowed_action_types": [], "due_soon_days_by_action": WINDOWS}, "allowed_action_types"),
+        ({"allowed_action_types": ["lab", "lab"], "due_soon_days_by_action": WINDOWS}, "allowed_action_types"),
+        ({"allowed_action_types": ["surgery"], "due_soon_days_by_action": WINDOWS}, "allowed_action_types"),
+        ({"allowed_action_types": "lab", "due_soon_days_by_action": WINDOWS}, "allowed_action_types"),
+        ({"allowed_action_types": ["lab"], "due_soon_days_by_action": {"lab": -1}}, "lab"),
+        ({"allowed_action_types": ["lab"], "due_soon_days_by_action": {"lab": 366}}, "lab"),
+        ({"allowed_action_types": ["lab"], "due_soon_days_by_action": {"lab": "7"}}, "lab"),
+        ({"allowed_action_types": ["lab"], "due_soon_days_by_action": {"lab": 7.5}}, "lab"),
+        ({"allowed_action_types": ["lab"], "due_soon_days_by_action": {"lab": True}}, "lab"),
+        ({"allowed_action_types": ["lab"], "due_soon_days_by_action": {"lab": None}}, "lab"),
+        ({"allowed_action_types": ["lab"], "due_soon_days_by_action": {}}, "lab"),
+        ({"allowed_action_types": ["lab"], "due_soon_days_by_action": 7}, "due_soon_days_by_action"),
+        ({"allowed_action_types": ["lab"], "due_soon_days_by_action": [7]}, "due_soon_days_by_action"),
+        ({"allowed_action_types": ["lab", "referral"], "due_soon_days_by_action": WINDOWS}, "referral"),
+        ({"allowed_action_types": ["lab"], "due_soon_days_by_action": {"lab": 7, "recheck": 14}}, "recheck"),
+        ({"allowed_action_types": ["lab"], "due_soon_days_by_action": {"surgery": 7}}, "surgery"),
+        ({"allowed_action_types": ["lab"], "due_soon_days_by_action": {"Lab": 7}}, "Lab"),
+        ({"allowed_action_types": ["lab"], "due_soon_days": 7}, "due_soon_days"),
+        ({"allowed_action_types": ["lab"], "due_soon_days_by_action": WINDOWS, "extra": 1}, "extra"),
     ],
 )
 def test_invalid_values_name_the_offending_field(tmp_path, content, field):
@@ -105,3 +120,23 @@ def test_invalid_values_name_the_offending_field(tmp_path, content, field):
 
     assert field in str(error.value)
     assert str(path) in str(error.value)
+
+
+def test_an_action_type_with_no_window_is_reported_by_name(tmp_path):
+    path = write_settings(
+        tmp_path / "settings.json",
+        {"allowed_action_types": ["lab", "referral"], "due_soon_days_by_action": WINDOWS},
+    )
+
+    with pytest.raises(SettingsError, match="no due-soon window for referral"):
+        load_settings(path)
+
+
+def test_a_window_for_an_action_type_that_is_not_allowed_is_reported_by_name(tmp_path):
+    path = write_settings(
+        tmp_path / "settings.json",
+        {"allowed_action_types": ["lab"], "due_soon_days_by_action": {"lab": 7, "recheck": 14}},
+    )
+
+    with pytest.raises(SettingsError, match="recheck is not an allowed action type"):
+        load_settings(path)
