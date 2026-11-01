@@ -1,16 +1,16 @@
 """Typed input records and validation that turns bad records into readable rejections."""
 
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 import re
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from pydantic import (
     BaseModel, BeforeValidator, ConfigDict, Field, StringConstraints, ValidationError,
     ValidationInfo, field_validator, model_validator,
 )
 
-from app.constants import ALLOWED_ACTION_TYPES, ActionType, FollowUpStatus
+from app.constants import ALLOWED_ACTION_TYPES, ActionType
 from app.ingestion.settings import Settings
 
 ISO_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
@@ -33,6 +33,12 @@ def parse_iso_date(value: Any) -> Any:
 IsoDate = Annotated[date, BeforeValidator(parse_iso_date)]
 RecordId = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=50, strict=True)]
 Text = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=500, strict=True)]
+FreeText = Annotated[str, StringConstraints(strip_whitespace=True, max_length=2000, strict=True)]
+
+# Ingestion statuses: a follow-up is open, or closed for one of the reasons below.
+# TODO: app.constants.FollowUpStatus and schema.sql still say open/done until the schema change lands.
+IngestStatus = Literal["open", "closed"]
+ClosureReason = Literal["completed", "patient_declined", "unable_to_reach", "appointment_cancelled"]
 
 
 class Record(BaseModel):
@@ -76,13 +82,16 @@ class VisitRecord(Record):
 
 
 class FollowUpRecord(Record):
+    # Field order matters: later validators read the status that was validated before them.
     followup_id: RecordId
     visit_id: RecordId
     action_type: ActionType
     due_date: IsoDate
     assigned_staff_id: RecordId | None = None
-    status: FollowUpStatus = "open"
-    completed_at: Text | None = None
+    status: IngestStatus = "open"
+    completed_at: Text | None = Field(default=None, validate_default=True)  # closure time
+    closure_reason: ClosureReason | None = None
+    notes: FreeText | None = None
 
     @field_validator("action_type", mode="before")
     @classmethod
@@ -93,21 +102,39 @@ class FollowUpRecord(Record):
             raise ValueError(f"unsupported action type {value!r}; allowed types: {', '.join(allowed)}")
         return value
 
-    @field_validator("completed_at")
+    @field_validator("completed_at", mode="before")
     @classmethod
-    def completed_at_is_timestamp(cls, value: str | None) -> str | None:
-        if value is not None:
-            try:
-                datetime.fromisoformat(value)
-            except ValueError:
-                raise ValueError("must be an ISO date or timestamp") from None
+    def closure_time_matches_status(cls, value: Any, info: ValidationInfo) -> Any:
+        status = info.data.get("status")
+        if status == "open" and value is not None:
+            raise ValueError("must be empty while status is open")
+        if status == "closed" and value is None:
+            raise ValueError("is required when status is closed")
+        if not isinstance(value, str):
+            return value
+        # Searches read the first 10 characters as the date, so store one canonical format.
+        text = value.strip()
+        if ISO_DATE.fullmatch(text):
+            text += "T00:00:00Z"
+        try:
+            moment = datetime.fromisoformat(text)
+        except ValueError:
+            raise ValueError("must be an ISO date or timestamp") from None
+        if moment.tzinfo is None:
+            raise ValueError("timestamp must include a timezone, such as Z or +00:00")
+        return moment.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    @field_validator("closure_reason")
+    @classmethod
+    def reason_only_when_closed(cls, value: str | None, info: ValidationInfo) -> str | None:
+        if value is not None and info.data.get("status") == "open":
+            raise ValueError("must be empty while status is open")
         return value
 
-    @model_validator(mode="after")
-    def open_follow_up_not_completed(self) -> "FollowUpRecord":
-        if self.status == "open" and self.completed_at is not None:
-            raise ValueError("completed_at must be empty while status is open")
-        return self
+    @field_validator("notes", mode="before")
+    @classmethod
+    def blank_notes_mean_none(cls, value: Any) -> Any:
+        return None if isinstance(value, str) and not value.strip() else value
 
 
 # kind: (record model, name of the identifier field)
