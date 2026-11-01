@@ -24,6 +24,7 @@
   /* Feature slides build up: each red circle with its note (see the script). */
   .build { opacity: 0; transition: opacity .3s ease, transform .3s ease; }
   .mark.build { transform: scale(1.15); }
+  .inset.build { transform: translateY(8px); }
   .notes li.build { transform: translateY(6px); }
   .slide .build.shown { opacity: 1; transform: none; }
   .eyebrow { font-size: 13px; letter-spacing: .12em; text-transform: uppercase; color: var(--accent); font-weight: 700; margin-bottom: 8px; }
@@ -90,6 +91,8 @@
   .shot img { display: block; width: 100%; height: 100%; border-radius: 4px; box-shadow: 0 2px 10px rgba(19, 38, 63, .10); border: 1px solid var(--line); }
   /* The line is an outline, drawn outside the element's box, so it never covers what it circles. */
   .mark { position: absolute; outline: 4px solid var(--mark); outline-offset: 4px; }
+  /* A second screenshot over the first, for what opens after a click */
+  .shot .inset { position: absolute; right: 10px; bottom: -18px; width: 300px; height: auto; border-radius: 6px; box-shadow: 0 18px 40px rgba(9, 25, 45, .35); }
   .mark .n { position: absolute; left: -42px; top: calc(50% - 13px); width: 26px; height: 26px; border-radius: 50%; background: var(--mark); color: #fff; font-size: 14px; font-weight: 800; display: grid; place-items: center; box-shadow: 0 0 0 3px #fff; }
   .mark.badge-top .n { left: calc(50% - 13px); top: -42px; }
   .notes ol { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 18px; }
@@ -264,12 +267,13 @@
           <div class="mark badge-left" style="left:1.25%;top:9.44%;width:32.50%;height:10.44%;border-radius:18px"><span class="n">1</span></div>
           <div class="mark badge-top" style="left:65.07%;top:33.56%;width:7.43%;height:18.22%;border-radius:18px"><span class="n">2</span></div>
           <div class="mark badge-left" style="left:58.06%;top:54.22%;width:7.57%;height:14.22%;border-radius:18px"><span class="n">3</span></div>
+          <img class="inset" data-step="3" src="screenshots/08-close-reason.png" alt="The box that asks why a follow-up is closed">
       </div>
       <div class="notes">
         <ol>
           <li><span class="n">1</span><div><b>Today at a glance</b><span>Overdue, due soon, and unassigned counts for the “As of” date.</span></div></li>
           <li><span class="n">2</span><div><b>One flag per follow-up</b><span>Overdue the day after its date; due soon inside its window; unassigned when no date is set.</span></div></li>
-          <li><span class="n">3</span><div><b>Change it in place</b><span>Choosing Closed asks for the reason.</span></div></li>
+          <li><span class="n">3</span><div><b>Change it in place</b><span>Choosing Closed asks for the reason, which is kept in the history.</span></div></li>
         </ol>
       </div>
     </div>
@@ -405,6 +409,8 @@
     const notes = [...slide.querySelectorAll(".notes li")];
     const list = [...slide.querySelectorAll(".mark")].map((mark, i) => [mark, notes[i]].filter(Boolean));
     if (list.length) list.at(-1).push(...slide.querySelectorAll(".notes .footnote"));
+    // Anything marked data-step="N" appears with circle N.
+    slide.querySelectorAll("[data-step]").forEach((element) => list[Number(element.dataset.step) - 1]?.push(element));
     list.flat().forEach((element) => element.classList.add("build"));
     return list;
   });
