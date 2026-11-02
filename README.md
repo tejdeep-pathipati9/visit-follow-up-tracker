@@ -265,9 +265,10 @@ rejects anything likely to change data (`modification_not_allowed`) or unrelated
 (`unsupported_question`). Then a SQL model writes one parameterized `SELECT` from the
 question, the table layout, the date, and the asker's staff ID; patient records and the
 answer rows never leave the server. The response includes the SQL, its parameters, an
-explanation, and the rows; the Ask tab shows the explanation and the rows. For staff who are not
-managers, the query runs against temporary views with the same names as the tables that
-hold only their rows, and reading the real tables directly (`main.followups`) is refused.
+explanation, and the rows; the Ask tab shows the explanation and the rows. For staff who
+are not managers, the query runs on a private in-memory copy of the database that holds
+only their rows, with patient contact details removed, so no query can reach anyone
+else's records, however it names its tables.
 
 Neither model is trusted to keep data safe. The query runs on a read-only connection
 whose SQLite [authorizer](https://www.sqlite.org/c3ref/set_authorizer.html) rejects

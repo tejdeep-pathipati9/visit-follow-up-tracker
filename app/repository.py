@@ -1,5 +1,6 @@
 """Run server-built search SQL and AI-generated SQL with SQLite-enforced read-only permissions."""
 
+from contextlib import closing
 import json
 import sqlite3
 from time import monotonic
@@ -23,8 +24,8 @@ SENSITIVE_COLUMNS = frozenset({("patients", "phone"), ("patients", "email")})
 
 # The rows a staff member who is not a manager may see: the follow-ups assigned to them,
 # the patients those belong to with their episodes and visits, and those follow-ups'
-# history. {staff} is :scope_staff in searches (NULL for a manager) and the quoted staff
-# ID in a scoped question. Entries after "followups" read the already-limited follow-ups.
+# history. {staff} is :scope_staff (NULL for a manager). Used as same-named CTEs, in this
+# order, so entries after "followups" read the already-limited follow-ups.
 SCOPED_ROWS = {
     "followups": "SELECT * FROM main.followups WHERE {staff} IS NULL OR assigned_staff_id = {staff}",
     "patients": "SELECT * FROM main.patients WHERE {staff} IS NULL OR patient_id IN ({patients})",
@@ -41,18 +42,37 @@ def scoped_rows(table: str, staff: str) -> str:
     return SCOPED_ROWS[table].format(staff=staff, patients=SCOPED_PATIENTS)
 
 
-def limit_to_staff(connection: sqlite3.Connection, staff_id: str) -> None:
-    """Shadow the scoped tables with temporary views for one staff member. Unqualified
-    names resolve to the temp schema first, so a query sees only those rows."""
-    literal = "'" + staff_id.replace("'", "''") + "'"
-    for table in SCOPED_ROWS:
-        connection.execute(f"DROP VIEW IF EXISTS temp.{table}")
-        connection.execute(f"CREATE TEMP VIEW {table} AS {scoped_rows(table, literal)}")
+SCOPE = "WITH " + ",\n".join(f"{table} AS ({scoped_rows(table, ':scope_staff')})" for table in SCOPED_ROWS)
 
 
-def remove_staff_limit(connection: sqlite3.Connection) -> None:
-    for table in reversed(SCOPED_ROWS):
-        connection.execute(f"DROP VIEW IF EXISTS temp.{table}")
+def staff_copy(
+    connection: sqlite3.Connection, staff_id: str, hidden_columns: frozenset[tuple[str, str]],
+) -> sqlite3.Connection:
+    """A private in-memory database holding only the rows this staff member may read, with
+    hidden columns emptied. Their questions run here, so no query can reach other rows,
+    however it names its tables or CTEs."""
+    copy = sqlite3.connect(":memory:")
+    names = sorted(READABLE_TABLES)
+    schema = connection.execute(
+        "SELECT type, tbl_name, sql FROM sqlite_schema WHERE tbl_name IN ({}) AND sql IS NOT NULL "
+        "ORDER BY type = 'index'".format(",".join("?" for _ in names)),
+        names,
+    ).fetchall()
+    for kind, table, sql in schema:
+        if kind == "table":
+            copy.execute(sql)
+            rows = connection.execute(
+                f"{SCOPE} SELECT * FROM {table}" if table in SCOPED_ROWS else f"SELECT * FROM main.{table}",
+                {"scope_staff": staff_id},
+            ).fetchall()
+            if rows:
+                copy.executemany(f"INSERT INTO {table} VALUES ({','.join('?' * len(rows[0]))})", rows)
+        else:
+            copy.execute(sql)
+    for table, column in hidden_columns:
+        copy.execute(f"UPDATE {table} SET {column} = NULL")
+    copy.commit()
+    return copy
 
 
 QUERY_TIMEOUT_SECONDS = 2.0
@@ -93,9 +113,12 @@ def execute_query(
     scope: str | None = None,
     built_in: bool = False,
 ) -> QueryResponse:
-    """Run one read-only query. With a scope (a staff ID), the query sees only that staff
-    member's rows: scoped tables can be read only through the temporary views. Built-in
-    searches skip the step limit and get a longer time limit; model-written SQL never does."""
+    """Run one read-only query. With a scope (a staff ID), the query runs on a private copy
+    holding only that staff member's rows. Built-in searches skip the step limit and get a
+    longer time limit; model-written SQL never does."""
+    if scope is not None:
+        with closing(staff_copy(connection, scope, hidden_columns)) as copy:
+            return execute_query(copy, request, hidden_columns, built_in=built_in)
     denied = False
     timed_out = False
     steps = 0
@@ -109,12 +132,7 @@ def execute_query(
         main_table_read = database == "main" or (database is None and arg2 == "")
         # SQLITE_IGNORE substitutes NULL, so hidden values cannot be selected or filtered on.
         allowed = sqlite3.SQLITE_IGNORE if (arg1, arg2) in hidden_columns else sqlite3.SQLITE_OK
-        if action == sqlite3.SQLITE_READ and scope is not None and database == "temp" and arg1 in SCOPED_ROWS:
-            return allowed
         if action == sqlite3.SQLITE_READ and main_table_read and arg1 in READABLE_TABLES:
-            if scope is not None and arg1 in SCOPED_ROWS and source not in SCOPED_ROWS:
-                denied = True  # "main.followups" would skip the staff member's limit
-                return sqlite3.SQLITE_DENY
             return allowed
         if action == sqlite3.SQLITE_FUNCTION and (arg2 or "").lower() in ALLOWED_FUNCTIONS:
             return sqlite3.SQLITE_OK
@@ -139,8 +157,6 @@ def execute_query(
     ):
         connection.setlimit(category, maximum)
 
-    if scope is not None:
-        limit_to_staff(connection, scope)
     # Keep authorization active during fetching: SQLite may reprepare a statement.
     # https://www.sqlite.org/c3ref/set_authorizer.html
     connection.set_authorizer(authorize)
@@ -186,5 +202,3 @@ def execute_query(
             cursor.close()
         connection.set_progress_handler(None, 0)
         connection.set_authorizer(None)
-        if scope is not None:
-            remove_staff_limit(connection)

@@ -190,16 +190,37 @@ def test_staff_questions_see_only_their_follow_ups(database, use_assistant, sql,
     assert response.json()["result"]["rows"] == rows
 
 
-@pytest.mark.parametrize("sql", [
-    "SELECT followup_id FROM main.followups",
-    "SELECT name FROM main.patients",
-    "WITH followups AS (SELECT * FROM main.followups) SELECT COUNT(*) FROM followups",
-    "SELECT sql FROM sqlite_temp_schema",
+# Staff questions run on a copy that holds only their rows, so these return her rows only,
+# however the query names its tables. The first is the bypass found in review: a CTE named
+# like a table that reads the real one.
+@pytest.mark.parametrize(("sql", "rows"), [
+    ("WITH followups AS (SELECT * FROM main.followups) SELECT followup_id FROM followups", [["F003"]]),
+    ("WITH followups AS MATERIALIZED (SELECT * FROM main.followups) SELECT followup_id FROM followups", [["F003"]]),
+    ("WITH followups AS (SELECT * FROM main.followups) SELECT COUNT(*) FROM followups", [[1]]),
+    ("WITH patients AS (SELECT * FROM main.patients) SELECT patient_id FROM patients", [["P002"]]),
+    ("WITH f AS (SELECT * FROM main.followups) SELECT followup_id FROM f", [["F003"]]),
+    ("SELECT followup_id FROM main.followups", [["F003"]]),
+    ('SELECT followup_id FROM "main"."followups"', [["F003"]]),
+    ("SELECT COUNT(*) FROM main.visits", [[1]]),
+    ("SELECT patient_id, phone, email FROM main.patients", [["P002", None, None]]),
 ])
-def test_staff_questions_cannot_step_around_the_limit(database, use_assistant, sql):
+def test_staff_questions_cannot_reach_other_rows(database, use_assistant, sql, rows):
+    response = nurse_asks(use_assistant, sql)
+    assert response.status_code == 200, response.text
+    assert response.json()["result"]["rows"] == rows
+
+
+@pytest.mark.parametrize("sql", [
+    "SELECT sql FROM sqlite_schema",
+    "SELECT sql FROM sqlite_temp_schema",
+    "DELETE FROM followups",
+])
+def test_staff_questions_cannot_read_the_schema_or_write(database, use_assistant, sql):
     response = nurse_asks(use_assistant, sql)
     assert response.status_code == 422
     assert response.json()["detail"]["code"] == "query_not_allowed"
+    with closing(sqlite3.connect(database)) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM followups").fetchone()[0] == 7
 
 
 def test_staff_limit_is_removed_after_the_question(database, use_assistant):

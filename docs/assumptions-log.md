@@ -45,7 +45,7 @@ Status: **Clinic** (the instructor answered as the clinic), **Agreed** (team agr
 | A14 | Web app or command line | The web app is the interface; scripts cover operations (import, backup, retention) | C11 | Team | Agreed |
 | A15 | Release 1.1.0 rule | Replaced by A18 | | Sanket | Replaced by A18 |
 | A16 | Reschedule history | Replaced by A19 | | Jihyung | Replaced by A19 |
-| A17 | Plain-English questions | Everyone may ask; staff who are not managers get answers from their own rows only. Enforced by the database (scoped temporary views, direct table reads refused), not by the model. | C9 | Jihyung | Agreed |
+| A17 | Plain-English questions | Everyone may ask; staff who are not managers get answers from their own rows only. Enforced by the database, not by the model: their questions run on a private in-memory copy that holds only their rows. | C9 | Jihyung | Agreed |
 | A18 | Release 1.1.0 | Adds passwords to sign-in, for security; 1.0.0 is internal use with email-only sign-in | Security once the tool leaves internal use | Jihyung | Agreed (see O9) |
 | A19 | Change history | One `followup_history` row for each change of status, scheduled date, or staff member, with who made it and the note sent with it, in the same transaction as the change | Brief; C1, C8 | Jihyung | Agreed |
 | A20 | What a visit is | Every encounter in an episode: a consultation, a test, or a treatment. Every visit has a staff member. | Clarified by Jihyung | Jihyung | Agreed |

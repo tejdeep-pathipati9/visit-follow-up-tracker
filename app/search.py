@@ -175,9 +175,7 @@ def joined_counts_sql(alias: str) -> str:
 # Every search reads these instead of the tables (see repository.SCOPED_ROWS). With
 # :scope_staff NULL (a manager), every row is visible; otherwise only the staff member's
 # follow-ups and their patients' records, so counts include only their own follow-ups.
-SCOPE = "WITH " + ",\n".join(
-    f"{table} AS ({repository.scoped_rows(table, ':scope_staff')})" for table in repository.SCOPED_ROWS
-)
+SCOPE = repository.SCOPE
 
 FOLLOWUP_BASE = SCOPE + """,
 base AS (

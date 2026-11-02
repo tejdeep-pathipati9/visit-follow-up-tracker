@@ -4,6 +4,10 @@
 
 ### Fixed
 
+- A staff member's question could read other staff members' records when the generated
+  SQL defined a CTE named after a table, such as
+  `WITH followups AS (SELECT * FROM main.followups)`. Their questions now run on a copy
+  that holds only their rows.
 - Lists, counts, and the report no longer fail with `query_limit_exceeded` on ten years of
   records (120,000 visits): the app's own searches have only a 30-second time limit. The
   step and 2-second limits still apply to model-written SQL.
@@ -20,7 +24,8 @@
 - `status_changes` is replaced by `followup_history`: one row for each change of status,
   scheduled date, or staff member, with who made it.
 - Everyone can ask plain-English questions; staff who are not managers get answers from
-  their own follow-ups only, enforced by scoped temporary views.
+  their own follow-ups only. Their questions run on a private in-memory copy that holds only
+  their rows.
 - Every visit (consultation, test, or treatment) needs a staff member.
 - "Unassigned" now means a follow-up has no scheduled date yet. `followups.due_date` is the
   scheduled date and may be NULL; overdue and due soon apply only when it is set, so the
