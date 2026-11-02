@@ -30,6 +30,7 @@ import {
   WorkspaceError,
   WorkspaceLoading,
 } from "@/components/workspace-state";
+import { useRecordPermissions } from "@/lib/session";
 import { useApi, useWorkspace } from "@/lib/workspace";
 import { navigate } from "@/lib/router";
 import { addDays, formatDate, titleCase } from "@/lib/types";
@@ -111,6 +112,8 @@ function ActionRow({
 
 export function DashboardPage() {
   const { asOf, setAsOf, sample } = useWorkspace();
+  // Managers see the whole clinic; other staff see their own follow-ups only.
+  const { manage } = useRecordPermissions();
   const summary = useApi<Summary>("dashboard");
   const overdueWeek = useApi<Page<Followup>>("followups", {
     preset: "overdue_7_plus",
@@ -201,7 +204,9 @@ export function DashboardPage() {
             Follow-up operations
           </h1>
           <p className="mt-0.5 text-sm text-muted-foreground">
-            What needs attention across the clinic as of {formatDate(asOf)}.
+            {manage
+              ? `What needs attention across the clinic as of ${formatDate(asOf)}.`
+              : `Your follow-ups and what needs attention as of ${formatDate(asOf)}.`}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -308,14 +313,18 @@ export function DashboardPage() {
             detail="Patients to contact"
             count={d.patients_with_overdue}
             tone="bg-sky-600"
-            onClick={() => navigate("patients")}
+            onClick={() => navigate("patients", { flag: "overdue" })}
           />
         </Card>
 
         <Card className="gap-4 dark:bg-transparent">
           <CardHeader>
-            <CardTitle>Team and workload</CardTitle>
-            <CardDescription>Where open work is piling up.</CardDescription>
+            <CardTitle>{manage ? "Team and workload" : "My workload"}</CardTitle>
+            <CardDescription>
+              {manage
+                ? "Where open work is piling up."
+                : "Your open follow-ups by what they need."}
+            </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="flex items-center gap-4">
@@ -360,14 +369,16 @@ export function DashboardPage() {
               </ul>
             </div>
             <dl className="divide-y border-y text-sm">
-              <div className="flex justify-between gap-3 py-2.5">
-                <dt className="text-muted-foreground">Most overdue</dt>
-                <dd className="text-right">
-                  {staffBehind?.overdue_followups
-                    ? `${staffBehind.label} · ${staffBehind.overdue_followups}`
-                    : "—"}
-                </dd>
-              </div>
+              {manage && (
+                <div className="flex justify-between gap-3 py-2.5">
+                  <dt className="text-muted-foreground">Most overdue</dt>
+                  <dd className="text-right">
+                    {staffBehind?.overdue_followups
+                      ? `${staffBehind.label} · ${staffBehind.overdue_followups}`
+                      : "—"}
+                  </dd>
+                </div>
+              )}
               <div className="flex justify-between gap-3 py-2.5">
                 <dt className="text-muted-foreground">Slowest follow-up type</dt>
                 <dd className="text-right">
@@ -376,12 +387,14 @@ export function DashboardPage() {
                     : "—"}
                 </dd>
               </div>
-              <div className="flex justify-between gap-3 py-2.5">
-                <dt className="text-muted-foreground">Staff with overdue work</dt>
-                <dd className="font-mono tabular-nums">
-                  {staffWithOverdue} of {owners.data.groups.length}
-                </dd>
-              </div>
+              {manage && (
+                <div className="flex justify-between gap-3 py-2.5">
+                  <dt className="text-muted-foreground">Staff with overdue work</dt>
+                  <dd className="font-mono tabular-nums">
+                    {staffWithOverdue} of {owners.data.groups.length}
+                  </dd>
+                </div>
+              )}
             </dl>
             <Button
               size="sm"
@@ -389,7 +402,7 @@ export function DashboardPage() {
               className="w-full justify-between"
               onClick={() => navigate("reports")}
             >
-              View team workload
+              {manage ? "View team workload" : "View my workload"}
               <ArrowRight />
             </Button>
           </CardContent>

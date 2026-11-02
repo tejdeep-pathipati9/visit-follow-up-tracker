@@ -19,7 +19,9 @@
 
 - The dashboard is for follow-up and patient management: today's counts, an action
   center, team workload with one chart (the mix of open follow-ups), what is coming this
-  week, and the last 30 days. The timeline and bar charts are gone.
+  week, and the last 30 days. The timeline and bar charts are gone. Staff who are not
+  managers see "My workload" instead of the team comparison, and "Patients with overdue
+  follow-ups" opens the patients list filtered to them.
 - The app adds any missing tables when it starts with an existing database, so replacing
   the 1.0.0 container with 1.1.0 is the whole upgrade. A missing database is still left for
   `scripts/table_generate.py`.

@@ -162,6 +162,7 @@ describe("Calendar", () => {
     const user = mount("/#/calendar", endpoint, false);
     await user.click(await screen.findByRole("button", { name: "New event" }));
     expect(screen.getByText("You (Nurse Birch Sample)")).toBeInTheDocument();
+    expect(screen.getByText("For you. Use synthetic records only.")).toBeInTheDocument();
     await user.type(screen.getByLabelText(/Title/), "Call the lab");
     await user.click(screen.getByRole("button", { name: "Add event" }));
     await vi.waitFor(() => expect(posted).toHaveLength(1));

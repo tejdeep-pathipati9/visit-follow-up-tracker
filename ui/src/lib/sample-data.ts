@@ -405,12 +405,14 @@ export async function sampleRequest<T>(
         };
       }
       const filtered = patients.filter(
-        (p) =>
-          !params.q ||
-          Object.values(p)
-            .join(" ")
-            .toLowerCase()
-            .includes(String(params.q).toLowerCase()),
+        (p, i) =>
+          (!params.q ||
+            Object.values(p)
+              .join(" ")
+              .toLowerCase()
+              .includes(String(params.q).toLowerCase())) &&
+          (!params.flag ||
+            one(params.flag).some((f) => rows[i].flags.includes(f as Attention))),
       );
       return samplePage(filtered, asof, params);
     }

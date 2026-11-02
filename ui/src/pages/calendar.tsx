@@ -560,9 +560,11 @@ function EventEditor({
           <DialogDescription>
             {sample
               ? "Connect your workspace to add or change events."
-              : canEdit
-                ? "For the whole clinic or one person. Use synthetic records only."
-                : "Only a manager changes events for the whole clinic or for others."}
+              : !canEdit
+                ? "Only a manager changes events for the whole clinic or for others."
+                : manage
+                  ? "For the whole clinic or one person. Use synthetic records only."
+                  : "For you. Use synthetic records only."}
           </DialogDescription>
         </DialogHeader>
         <form
