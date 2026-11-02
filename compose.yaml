@@ -5,6 +5,10 @@ services:
       - "8000:8000"
     environment:
       FOLLOWUP_DB_PATH: /data/followups.db
+      # Only plain-English questions need these; Compose reads them from the shell or .env.
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODELS: ${OPENAI_MODELS:-}
+      OPENAI_SQL_MODEL: ${OPENAI_SQL_MODEL:-}
     volumes:
       - followup_data:/data
 

@@ -12,11 +12,32 @@
         <h1>Visit Follow-Up Tracker</h1>
         <p class="muted">Synthetic data only. Do not enter real patient records.</p>
       </div>
-      <label class="as-of">
-        As of
-        <input type="date" id="as-of-date">
-      </label>
+      <div class="topbar-actions">
+        <label class="as-of">
+          As of
+          <input type="date" id="as-of-date">
+        </label>
+        <button type="button" id="import-button" hidden>Import file</button>
+        <input type="file" id="import-input" accept=".json,application/json" hidden>
+        <a id="report-link" class="button-link" href="/report" target="_blank" rel="noopener" hidden>Printable report</a>
+        <span id="session" class="session" hidden>
+          <span id="session-name"></span>
+          <button type="button" id="sign-out" class="link">Sign out</button>
+        </span>
+      </div>
     </header>
+
+    <section id="sign-in" class="sign-in" hidden>
+      <form id="sign-in-form">
+        <h2>Sign in</h2>
+        <label for="sign-in-email">Staff email</label>
+        <input type="email" id="sign-in-email" autocomplete="username" required placeholder="name@clinic.example">
+        <button type="submit" class="primary">Sign in</button>
+        <p class="muted">Staff see the follow-ups assigned to them; managers see every follow-up.
+          Passwords come in a later release.</p>
+        <p id="sign-in-error" class="notice" hidden></p>
+      </form>
+    </section>
 
     <section id="dashboard" class="dashboard" aria-label="Summary"></section>
 
@@ -26,6 +47,7 @@
       <section id="ask-view" class="view" hidden>
         <form id="ask-form" class="ask-form">
           <label for="ask-question">Ask a question about the records (read only)</label>
+          <p id="ask-scope" class="muted" hidden>Answers use only the follow-ups assigned to you.</p>
           <textarea id="ask-question" rows="3" maxlength="1000"
             placeholder="Which patients have overdue lab follow-ups, and who is assigned?"></textarea>
           <div class="ask-actions">
@@ -48,10 +70,19 @@
           <div class="toolbar">
             <input type="search" id="search-text" placeholder="Search">
             <label>Sort <select id="sort-select"></select></label>
+            <label>Rows <select id="page-size"></select></label>
             <span id="result-count" class="muted"></span>
+            <button type="button" id="download-csv">Download CSV</button>
             <button type="button" id="new-record" class="primary">New</button>
           </div>
-          <div class="table-wrap"><table id="results-table"></table></div>
+          <div class="legend" aria-label="Row colors">
+            <span class="swatch row-overdue">Overdue</span>
+            <span class="swatch row-due_soon">Due soon</span>
+            <span class="swatch row-unassigned">Unassigned (no date)</span>
+            <span class="swatch row-closed">Done or closed</span>
+            <span class="muted">Click a column header to sort.</span>
+          </div>
+          <div class="table-wrap"><table id="results-table" class="sheet"></table></div>
           <div class="pager">
             <button type="button" id="prev-page">Previous</button>
             <span id="page-info" class="muted"></span>
@@ -69,6 +100,25 @@
       </div>
       <div id="drawer-body" class="drawer-body"></div>
     </aside>
+
+    <dialog id="import-dialog" class="import-dialog">
+      <div id="import-result"></div>
+      <form method="dialog" class="form-actions"><button class="primary">Close</button></form>
+    </dialog>
+
+    <dialog id="close-dialog" class="close-dialog" aria-labelledby="close-title">
+      <form method="dialog">
+        <h2 id="close-title">Close follow-up</h2>
+        <p class="muted">Closing means it could not be done. The reason is kept in its history.</p>
+        <label for="close-reason">Reason</label>
+        <textarea id="close-reason" rows="3" maxlength="500" required></textarea>
+        <div id="close-examples" class="chips"></div>
+        <div class="form-actions">
+          <button type="button" id="close-cancel">Cancel</button>
+          <button class="primary" value="close">Close follow-up</button>
+        </div>
+      </form>
+    </dialog>
 
     <div id="toast" class="toast" role="status" hidden></div>
 

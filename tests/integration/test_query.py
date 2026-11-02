@@ -7,14 +7,12 @@ that UI searches and natural-language questions use internally.
 from contextlib import closing
 import sqlite3
 
-from fastapi.testclient import TestClient
 from pydantic import ValidationError
 import pytest
 
-from app import repository
+from app import repository, search
 from app.db import read_database
-from app.main import app
-from app.models import QueryRequest
+from app.models import FollowUpSearch, QueryRequest
 from app.repository import QueryError
 
 
@@ -31,7 +29,7 @@ def rejected(sql, parameters=None):
 
 
 @pytest.mark.parametrize(("table", "count"), [
-    ("patients", 2), ("staff", 4), ("episodes", 2), ("visits", 2), ("followups", 7),
+    ("patients", 2), ("staff", 5), ("episodes", 2), ("visits", 2), ("followups", 7),
 ])
 def test_all_application_tables_can_be_queried(database, table, count):
     result = run(f"SELECT * FROM {table}")
@@ -64,7 +62,7 @@ def test_join_filters_and_sorting_are_defined_by_the_sql(database):
     assert result["columns"] == ["followup_id", "patient_name", "assigned_staff_name"]
     assert result["rows"] == [
         ["F006", "Zoë Tëst", "Dr. Example"],
-        ["F001", "Alice Example", None],
+        ["F001", "Alice Example", "Dr. Duplicate"],
         ["F007", "Zoë Tëst", "Dr. Example"],
     ]
 
@@ -197,6 +195,21 @@ def test_recursive_query_has_execution_budget(database):
     assert run("SELECT COUNT(*) FROM patients")["rows"] == [[2]]
 
 
+def test_built_in_searches_skip_the_step_limit_but_not_the_time_limit(database, monkeypatch):
+    # Ten years of records take far more steps than model-written SQL may use.
+    monkeypatch.setattr("app.repository.MAX_VM_STEPS", 1_000)
+    sql = "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 100000) SELECT SUM(i) FROM n"
+    assert rejected(sql).code == "query_limit_exceeded"
+    with read_database() as connection:
+        assert repository.execute_query(connection, QueryRequest(query=sql), built_in=True).rows == [[5_000_050_000]]
+        assert search.search_followups(connection, FollowUpSearch()).total == 7
+
+    monkeypatch.setattr("app.repository.BUILT_IN_TIMEOUT_SECONDS", 0)
+    with read_database() as connection, pytest.raises(QueryError) as error:
+        repository.execute_query(connection, QueryRequest(query=sql), built_in=True)
+    assert error.value.status_code == 408
+
+
 def test_result_size_is_bounded(database, monkeypatch):
     monkeypatch.setattr("app.repository.MAX_RESULT_BYTES", 20)
     result = run("SELECT name FROM patients ORDER BY patient_id")
@@ -220,13 +233,13 @@ def test_read_connection_cannot_write(database):
             connection.execute("DELETE FROM followups")
 
 
-def test_missing_database_returns_503_without_creating_file(tmp_path, monkeypatch):
+def test_missing_database_returns_503_without_creating_file(client, tmp_path, monkeypatch):
     missing = tmp_path / "missing.db"
-    monkeypatch.setenv("FOLLOWUP_DB_PATH", str(missing))
-    with TestClient(app) as client:
-        for response in (client.get("/api/schema"), client.get("/api/followups")):
-            assert response.status_code == 503
-            assert response.json()["detail"]["code"] == "database_unavailable"
+    monkeypatch.setenv("FOLLOWUP_DB_PATH", str(missing))  # the database disappears after sign-in
+    for response in (client.get("/api/schema"), client.get("/api/followups"),
+                     client.post("/api/session", json={"email": "manager@clinic.test"})):
+        assert response.status_code == 503
+        assert response.json()["detail"]["code"] == "database_unavailable"
     assert not missing.exists()
 
 

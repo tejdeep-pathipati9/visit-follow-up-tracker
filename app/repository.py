@@ -1,5 +1,6 @@
 """Run server-built search SQL and AI-generated SQL with SQLite-enforced read-only permissions."""
 
+from contextlib import closing
 import json
 import sqlite3
 from time import monotonic
@@ -7,7 +8,7 @@ from time import monotonic
 from app.models import QueryRequest, QueryResponse
 
 READABLE_TABLES = frozenset({
-    "patients", "staff", "episodes", "visits", "followups", "status_changes",
+    "patients", "staff", "episodes", "visits", "followups", "followup_history",
 })
 ALLOWED_FUNCTIONS = frozenset({
     "abs", "avg", "coalesce", "count", "date", "datetime", "dense_rank",
@@ -20,8 +21,65 @@ ALLOWED_FUNCTIONS = frozenset({
 })
 # Contact details read as NULL in AI-generated queries; staff UI searches still see them.
 SENSITIVE_COLUMNS = frozenset({("patients", "phone"), ("patients", "email")})
+
+# The rows a staff member who is not a manager may see: the follow-ups assigned to them,
+# the patients those belong to with their episodes and visits, and those follow-ups'
+# history. {staff} is :scope_staff (NULL for a manager). Used as same-named CTEs, in this
+# order, so entries after "followups" read the already-limited follow-ups.
+SCOPED_ROWS = {
+    "followups": "SELECT * FROM main.followups WHERE {staff} IS NULL OR assigned_staff_id = {staff}",
+    "patients": "SELECT * FROM main.patients WHERE {staff} IS NULL OR patient_id IN ({patients})",
+    "episodes": "SELECT * FROM main.episodes WHERE {staff} IS NULL OR patient_id IN ({patients})",
+    "visits": "SELECT * FROM main.visits WHERE {staff} IS NULL OR patient_id IN ({patients})",
+    "followup_history": (
+        "SELECT * FROM main.followup_history WHERE {staff} IS NULL OR followup_id IN (SELECT followup_id FROM followups)"
+    ),
+}
+SCOPED_PATIENTS = "SELECT v.patient_id FROM followups f JOIN main.visits v ON v.visit_id = f.visit_id"
+
+
+def scoped_rows(table: str, staff: str) -> str:
+    return SCOPED_ROWS[table].format(staff=staff, patients=SCOPED_PATIENTS)
+
+
+SCOPE = "WITH " + ",\n".join(f"{table} AS ({scoped_rows(table, ':scope_staff')})" for table in SCOPED_ROWS)
+
+
+def staff_copy(
+    connection: sqlite3.Connection, staff_id: str, hidden_columns: frozenset[tuple[str, str]],
+) -> sqlite3.Connection:
+    """A private in-memory database holding only the rows this staff member may read, with
+    hidden columns emptied. Their questions run here, so no query can reach other rows,
+    however it names its tables or CTEs."""
+    copy = sqlite3.connect(":memory:")
+    names = sorted(READABLE_TABLES)
+    schema = connection.execute(
+        "SELECT type, tbl_name, sql FROM sqlite_schema WHERE tbl_name IN ({}) AND sql IS NOT NULL "
+        "ORDER BY type = 'index'".format(",".join("?" for _ in names)),
+        names,
+    ).fetchall()
+    for kind, table, sql in schema:
+        if kind == "table":
+            copy.execute(sql)
+            rows = connection.execute(
+                f"{SCOPE} SELECT * FROM {table}" if table in SCOPED_ROWS else f"SELECT * FROM main.{table}",
+                {"scope_staff": staff_id},
+            ).fetchall()
+            if rows:
+                copy.executemany(f"INSERT INTO {table} VALUES ({','.join('?' * len(rows[0]))})", rows)
+        else:
+            copy.execute(sql)
+    for table, column in hidden_columns:
+        copy.execute(f"UPDATE {table} SET {column} = NULL")
+    copy.commit()
+    return copy
+
+
 QUERY_TIMEOUT_SECONDS = 2.0
 MAX_VM_STEPS = 1_000_000
+# The app's own searches must cover ten years of records (about 120,000 visits), which
+# takes far more than MAX_VM_STEPS; their SQL is written here, so only a time limit applies.
+BUILT_IN_TIMEOUT_SECONDS = 30.0
 MAX_RESULT_BYTES = 4 * 1024 * 1024
 
 
@@ -52,11 +110,19 @@ def execute_query(
     connection: sqlite3.Connection,
     request: QueryRequest,
     hidden_columns: frozenset[tuple[str, str]] = frozenset(),
+    scope: str | None = None,
+    built_in: bool = False,
 ) -> QueryResponse:
+    """Run one read-only query. With a scope (a staff ID), the query runs on a private copy
+    holding only that staff member's rows. Built-in searches skip the step limit and get a
+    longer time limit; model-written SQL never does."""
+    if scope is not None:
+        with closing(staff_copy(connection, scope, hidden_columns)) as copy:
+            return execute_query(copy, request, hidden_columns, built_in=built_in)
     denied = False
     timed_out = False
     steps = 0
-    deadline = monotonic() + QUERY_TIMEOUT_SECONDS
+    deadline = monotonic() + (BUILT_IN_TIMEOUT_SECONDS if built_in else QUERY_TIMEOUT_SECONDS)
 
     def authorize(action, arg1, arg2, database, source):
         nonlocal denied
@@ -64,9 +130,10 @@ def execute_query(
             return sqlite3.SQLITE_OK
         # Some SQLite builds omit the database name for COUNT(*) table reads.
         main_table_read = database == "main" or (database is None and arg2 == "")
+        # SQLITE_IGNORE substitutes NULL, so hidden values cannot be selected or filtered on.
+        allowed = sqlite3.SQLITE_IGNORE if (arg1, arg2) in hidden_columns else sqlite3.SQLITE_OK
         if action == sqlite3.SQLITE_READ and main_table_read and arg1 in READABLE_TABLES:
-            # SQLITE_IGNORE substitutes NULL, so hidden values cannot be selected or filtered on.
-            return sqlite3.SQLITE_IGNORE if (arg1, arg2) in hidden_columns else sqlite3.SQLITE_OK
+            return allowed
         if action == sqlite3.SQLITE_FUNCTION and (arg2 or "").lower() in ALLOWED_FUNCTIONS:
             return sqlite3.SQLITE_OK
         denied = True
@@ -75,7 +142,7 @@ def execute_query(
     def progress():
         nonlocal timed_out, steps
         steps += 1_000
-        timed_out = steps >= MAX_VM_STEPS or monotonic() >= deadline
+        timed_out = (not built_in and steps >= MAX_VM_STEPS) or monotonic() >= deadline
         return int(timed_out)
 
     # Bounds apply to SQL compilation and individual values as well as row count.

@@ -7,6 +7,7 @@ from contextlib import closing
 import sqlite3
 from types import SimpleNamespace
 
+from fastapi.testclient import TestClient
 import pytest
 
 from app.ai import DECISION_MODEL, OpenAIQueryAssistant, get_assistant, to_decision
@@ -24,8 +25,9 @@ class FakeAssistant:
     def decide(self, question):
         return self.decision
 
-    def generate_sql(self, question, schema, as_of, max_rows):
+    def generate_sql(self, question, schema, as_of, max_rows, asker=""):
         self.generate_calls.append((question, schema, as_of, max_rows))
+        self.asker = asker
         return self.query
 
 
@@ -160,3 +162,84 @@ def test_sql_model_comes_from_environment(monkeypatch, env, model):
     for name, value in env.items():
         monkeypatch.setenv(name, value)
     assert get_assistant().sql_model == model
+
+
+# --- staff who are not managers ask about their own follow-ups only ------------
+
+NURSE_EMAIL = "sample@clinic.test"  # S002, assigned only F003 (patient P002)
+
+
+def nurse_asks(use_assistant, sql):
+    use_assistant(FakeAssistant(sql=sql))
+    with TestClient(app) as client:
+        assert client.post("/api/session", json={"email": NURSE_EMAIL}).status_code == 200
+        return ask(client)
+
+
+@pytest.mark.parametrize(("sql", "rows"), [
+    ("SELECT followup_id FROM followups ORDER BY followup_id", [["F003"]]),
+    ("SELECT COUNT(*) FROM followups", [[1]]),
+    ("SELECT patient_id, phone FROM patients", [["P002", None]]),
+    ("SELECT DISTINCT episode_id FROM visits", [["E002"]]),
+    ("SELECT COUNT(*) FROM followups f JOIN visits v ON v.visit_id = f.visit_id WHERE v.patient_id = 'P001'", [[0]]),
+    ("WITH mine AS (SELECT followup_id FROM followups) SELECT COUNT(*) FROM mine", [[1]]),
+])
+def test_staff_questions_see_only_their_follow_ups(database, use_assistant, sql, rows):
+    response = nurse_asks(use_assistant, sql)
+    assert response.status_code == 200, response.text
+    assert response.json()["result"]["rows"] == rows
+
+
+# Staff questions run on a copy that holds only their rows, so these return her rows only,
+# however the query names its tables. The first is the bypass found in review: a CTE named
+# like a table that reads the real one.
+@pytest.mark.parametrize(("sql", "rows"), [
+    ("WITH followups AS (SELECT * FROM main.followups) SELECT followup_id FROM followups", [["F003"]]),
+    ("WITH followups AS MATERIALIZED (SELECT * FROM main.followups) SELECT followup_id FROM followups", [["F003"]]),
+    ("WITH followups AS (SELECT * FROM main.followups) SELECT COUNT(*) FROM followups", [[1]]),
+    ("WITH patients AS (SELECT * FROM main.patients) SELECT patient_id FROM patients", [["P002"]]),
+    ("WITH f AS (SELECT * FROM main.followups) SELECT followup_id FROM f", [["F003"]]),
+    ("SELECT followup_id FROM main.followups", [["F003"]]),
+    ('SELECT followup_id FROM "main"."followups"', [["F003"]]),
+    ("SELECT COUNT(*) FROM main.visits", [[1]]),
+    ("SELECT patient_id, phone, email FROM main.patients", [["P002", None, None]]),
+])
+def test_staff_questions_cannot_reach_other_rows(database, use_assistant, sql, rows):
+    response = nurse_asks(use_assistant, sql)
+    assert response.status_code == 200, response.text
+    assert response.json()["result"]["rows"] == rows
+
+
+@pytest.mark.parametrize("sql", [
+    "SELECT sql FROM sqlite_schema",
+    "SELECT sql FROM sqlite_temp_schema",
+    "DELETE FROM followups",
+])
+def test_staff_questions_cannot_read_the_schema_or_write(database, use_assistant, sql):
+    response = nurse_asks(use_assistant, sql)
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "query_not_allowed"
+    with closing(sqlite3.connect(database)) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM followups").fetchone()[0] == 7
+
+
+def test_staff_limit_is_removed_after_the_question(database, use_assistant):
+    nurse_asks(use_assistant, "SELECT 1")
+    use_assistant(FakeAssistant(sql="SELECT COUNT(*) FROM followups"))
+    with TestClient(app) as manager:
+        manager.post("/api/session", json={"email": "manager@clinic.test"})
+        assert ask(manager).json()["result"]["rows"] == [[7]]
+
+
+def test_the_model_is_told_who_is_asking_by_staff_id_only(database, use_assistant):
+    assistant = FakeAssistant(sql="SELECT COUNT(*) FROM followups")
+    use_assistant(assistant)
+    with TestClient(app) as client:
+        client.post("/api/session", json={"email": NURSE_EMAIL})
+        ask(client)
+    assert "staff member S002" in assistant.asker and "need no staff filter" in assistant.asker
+    assert "Nurse Sample" not in assistant.asker
+    with TestClient(app) as client:
+        client.post("/api/session", json={"email": "manager@clinic.test"})
+        ask(client)
+    assert "S005, a manager" in assistant.asker

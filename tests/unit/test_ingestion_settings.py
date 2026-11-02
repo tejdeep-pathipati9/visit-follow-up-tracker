@@ -36,7 +36,7 @@ def test_repository_default_settings_file_is_valid():
     settings = load_settings(DEFAULT_SETTINGS_PATH)
 
     assert settings.allowed_action_types == ["lab", "referral", "recheck"]
-    assert settings.due_soon_days_by_action == {"lab": 7, "referral": 14, "recheck": 14}
+    assert settings.due_soon_days_by_action == {"lab": 3, "referral": 14, "recheck": 14}
 
 
 def test_missing_file_names_the_path(tmp_path):

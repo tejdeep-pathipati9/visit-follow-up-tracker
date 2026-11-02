@@ -3,14 +3,14 @@
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 import re
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any
 
 from pydantic import (
     BaseModel, BeforeValidator, ConfigDict, Field, StringConstraints, ValidationError,
     ValidationInfo, field_validator, model_validator,
 )
 
-from app.constants import ALLOWED_ACTION_TYPES, ActionType
+from app.constants import ALLOWED_ACTION_TYPES, ActionType, FollowUpStatus
 from app.ingestion.settings import Settings
 
 ISO_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
@@ -34,11 +34,12 @@ IsoDate = Annotated[date, BeforeValidator(parse_iso_date)]
 RecordId = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=50, strict=True)]
 Text = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=500, strict=True)]
 FreeText = Annotated[str, StringConstraints(strip_whitespace=True, max_length=2000, strict=True)]
+StaffEmail = Annotated[str, StringConstraints(
+    strip_whitespace=True, to_lower=True, max_length=200, pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$", strict=True,
+)]
 
-# Ingestion statuses: a follow-up is open, or closed for one of the reasons below.
-# TODO: app.constants.FollowUpStatus and schema.sql still say open/done until the schema change lands.
-IngestStatus = Literal["open", "closed"]
-ClosureReason = Literal["completed", "patient_declined", "unable_to_reach", "appointment_cancelled"]
+# A follow-up is open, done (completed), or closed (could not be completed, for example
+# the patient was unreachable or did not return); a closed follow-up says why in notes.
 
 
 class Record(BaseModel):
@@ -55,7 +56,8 @@ class PatientRecord(Record):
 class StaffRecord(Record):
     staff_id: RecordId
     name: Text
-    role: Text
+    role: Text  # "manager" sees every follow-up; everyone else sees their own
+    email: StaffEmail | None = None  # used to sign in
 
 
 class EpisodeRecord(Record):
@@ -76,7 +78,7 @@ class VisitRecord(Record):
     visit_id: RecordId
     patient_id: RecordId
     episode_id: RecordId
-    staff_id: RecordId | None = None
+    staff_id: RecordId  # every visit (consultation, test, or treatment) has a staff member
     visit_date: IsoDate
     notes: str | None = None
 
@@ -86,12 +88,11 @@ class FollowUpRecord(Record):
     followup_id: RecordId
     visit_id: RecordId
     action_type: ActionType
-    due_date: IsoDate
-    assigned_staff_id: RecordId | None = None
-    status: IngestStatus = "open"
-    completed_at: Text | None = Field(default=None, validate_default=True)  # closure time
-    closure_reason: ClosureReason | None = None
-    notes: FreeText | None = None
+    due_date: IsoDate | None = None  # scheduled date; missing means unassigned (not yet scheduled)
+    assigned_staff_id: RecordId  # every follow-up has a responsible staff member
+    status: FollowUpStatus = "open"
+    completed_at: Text | None = Field(default=None, validate_default=True)  # when it became done or closed
+    notes: FreeText | None = Field(default=None, validate_default=True)  # required reason when closed
 
     @field_validator("action_type", mode="before")
     @classmethod
@@ -108,8 +109,8 @@ class FollowUpRecord(Record):
         status = info.data.get("status")
         if status == "open" and value is not None:
             raise ValueError("must be empty while status is open")
-        if status == "closed" and value is None:
-            raise ValueError("is required when status is closed")
+        if status in ("done", "closed") and value is None:
+            raise ValueError(f"is required when status is {status}")
         if not isinstance(value, str):
             return value
         # Searches read the first 10 characters as the date, so store one canonical format.
@@ -124,17 +125,17 @@ class FollowUpRecord(Record):
             raise ValueError("timestamp must include a timezone, such as Z or +00:00")
         return moment.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-    @field_validator("closure_reason")
-    @classmethod
-    def reason_only_when_closed(cls, value: str | None, info: ValidationInfo) -> str | None:
-        if value is not None and info.data.get("status") == "open":
-            raise ValueError("must be empty while status is open")
-        return value
-
     @field_validator("notes", mode="before")
     @classmethod
     def blank_notes_mean_none(cls, value: Any) -> Any:
         return None if isinstance(value, str) and not value.strip() else value
+
+    @field_validator("notes")
+    @classmethod
+    def reason_required_when_closed(cls, value: str | None, info: ValidationInfo) -> str | None:
+        if value is None and info.data.get("status") == "closed":
+            raise ValueError("a reason is required when status is closed, such as 'patient unreachable'")
+        return value
 
 
 # kind: (record model, name of the identifier field)

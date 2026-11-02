@@ -126,7 +126,8 @@ def test_follow_ups_are_never_due_before_their_visit_and_visits_are_not_in_the_f
     visit_dates = {visit["visit_id"]: visit["visit_date"] for visit in visits}
 
     assert all(visit["visit_date"] <= AS_OF.isoformat() for visit in visits)
-    assert all(followup["due_date"] >= visit_dates[followup["visit_id"]] for followup in followups)
+    scheduled = [followup for followup in followups if followup["due_date"] is not None]
+    assert all(followup["due_date"] >= visit_dates[followup["visit_id"]] for followup in scheduled)
 
 
 def test_episode_dates_are_consistent_with_their_visits(clean):
@@ -161,17 +162,13 @@ def test_scenario_follow_ups_get_exactly_the_expected_flags(clean):
         assert flags[followup_id] == expected, followup_id
 
 
-def test_clean_data_covers_every_flag_and_combination(clean):
+def test_clean_data_covers_every_flag_and_flags_never_combine(clean):
     _, followups = flatten(clean)
     flags = run_rules(validated("followup", followups), AS_OF, load_settings())
     seen = {tuple(value) for value in flags.values()}
 
-    assert ("overdue",) in seen
-    assert ("due_soon",) in seen
-    assert ("unassigned",) in seen
-    assert ("overdue", "unassigned") in seen
-    assert ("due_soon", "unassigned") in seen
-    assert () in seen
+    # Unassigned means no scheduled date, so it can never meet overdue or due soon.
+    assert seen == {(), ("overdue",), ("due_soon",), ("unassigned",)}
 
 
 def test_scenarios_cover_the_window_boundaries_for_every_action_type(clean):
@@ -180,11 +177,11 @@ def test_scenarios_cover_the_window_boundaries_for_every_action_type(clean):
     boundaries = Counter()
     for followup_id, expected in EXPECTED_FLAGS.items():
         followup = by_id[followup_id]
-        if followup["status"] == "open" and followup["assigned_staff_id"] is not None and "overdue" not in expected:
+        if followup["status"] == "open" and followup["due_date"] is not None and "overdue" not in expected:
             days = (date.fromisoformat(followup["due_date"]) - AS_OF).days
             boundaries[(followup["action_type"], days, bool(expected))] += 1
 
-    assert boundaries[("lab", 7, True)] and boundaries[("lab", 8, False)]
+    assert boundaries[("lab", 3, True)] and boundaries[("lab", 4, False)]
     assert boundaries[("referral", 14, True)] and boundaries[("referral", 15, False)]
     assert boundaries[("recheck", 14, True)] and boundaries[("recheck", 15, False)]
 
@@ -198,29 +195,32 @@ def test_due_today_is_present_and_due_soon(clean):
     assert all("due_soon" in flags[followup_id] and "overdue" not in flags[followup_id] for followup_id in today)
 
 
-def test_closed_follow_ups_cover_every_reason_and_no_reason(clean):
+def test_finished_follow_ups_have_a_time_and_closed_ones_say_why(clean):
     _, followups = flatten(clean)
-    closed = [followup for followup in followups if followup["status"] == "closed"]
+    finished = [followup for followup in followups if followup["status"] != "open"]
 
-    assert {followup.get("closure_reason") for followup in closed} == {
-        None, "completed", "patient_declined", "unable_to_reach", "appointment_cancelled",
-    }
-    assert all(followup["completed_at"] for followup in closed)
-    assert all("closure_reason" not in f and "completed_at" not in f for f in followups if f["status"] == "open")
+    assert {followup["status"] for followup in followups} == {"open", "done", "closed"}
+    assert all(followup["completed_at"] for followup in finished)
+    assert all(f.get("notes") for f in followups if f["status"] == "closed")
+    assert all("completed_at" not in f for f in followups if f["status"] == "open")
 
 
-def test_the_hand_built_scenarios_alone_cover_every_closure_reason_and_flag_combination():
+def test_every_follow_up_has_a_staff_member_and_some_have_no_date(clean):
+    _, followups = flatten(clean)
+    care_staff = {member["staff_id"] for member in clean["staff"] if member["role"] != "manager"}
+
+    assert all(followup["assigned_staff_id"] in care_staff for followup in followups)
+    assert any(followup["due_date"] is None for followup in followups)
+
+
+def test_the_hand_built_scenarios_alone_cover_every_status_and_flag():
     # No random filler at the minimum size, so nothing here is covered by luck.
     data = generate(seed=1, as_of=AS_OF, visits=MIN_VISITS).clean
     _, followups = flatten(data)
     flags = run_rules(validated("followup", followups), AS_OF, load_settings())
 
-    assert {f.get("closure_reason") for f in followups if f["status"] == "closed"} == {
-        None, "completed", "patient_declined", "unable_to_reach", "appointment_cancelled",
-    }
-    assert {tuple(value) for value in flags.values()} == {
-        (), ("overdue",), ("due_soon",), ("unassigned",), ("overdue", "unassigned"), ("due_soon", "unassigned"),
-    }
+    assert {f["status"] for f in followups} == {"open", "done", "closed"}
+    assert {tuple(value) for value in flags.values()} == {(), ("overdue",), ("due_soon",), ("unassigned",)}
 
 
 def test_closed_follow_ups_include_one_that_is_past_due(clean):
@@ -228,7 +228,8 @@ def test_closed_follow_ups_include_one_that_is_past_due(clean):
     flags = run_rules(validated("followup", followups), AS_OF, load_settings())
 
     assert any(
-        followup["status"] == "closed" and followup["due_date"] < AS_OF.isoformat() and not flags[followup["followup_id"]]
+        followup["status"] == "closed" and followup["due_date"] is not None
+        and followup["due_date"] < AS_OF.isoformat() and not flags[followup["followup_id"]]
         for followup in followups
     )
 
@@ -287,7 +288,7 @@ def test_every_bad_case_is_rejected_for_its_intended_reason(generated):
 def test_bad_cases_cover_the_required_kinds_of_bad_rows(generated):
     reasons = " ".join(case.reason_contains or "" for case in generated.bad_cases)
 
-    for needed in ("patient_id", "action_type", "due_date", "followup_id", "completed_at", "closure_reason"):
+    for needed in ("patient_id", "action_type", "due_date", "followup_id", "completed_at", "notes", "assigned_staff_id"):
         assert needed in reasons
     assert any(case.reason_contains is None for case in generated.bad_cases)
 
@@ -342,7 +343,7 @@ def test_a_thousand_visits_are_generated_and_all_valid():
     assert len(visits) == 1000
     assert len(followups) >= 1000
     for kind, records in (("visit", visits), ("followup", followups), ("patient", data["patients"]),
-                          ("episode", data["episodes"])):
+                          ("episode", data["episodes"]), ("staff", data["staff"])):
         validated(kind, records)
     assert len({followup["followup_id"] for followup in followups}) == len(followups)
 
@@ -368,6 +369,14 @@ def test_contact_details_are_obviously_fake(clean):
         assert patient.get("phone") is None or patient["phone"].startswith("555-01")
     assert any(patient.get("email") for patient in clean["patients"])
     assert any("email" not in patient for patient in clean["patients"])
+
+
+def test_staff_sign_in_with_unique_fake_emails_and_one_is_a_manager(clean):
+    emails = [member["email"] for member in clean["staff"]]
+
+    assert all(email.endswith("@clinic.example.test") for email in emails)
+    assert len(set(emails)) == len(emails)
+    assert [member["role"] for member in clean["staff"]].count("manager") == 1
 
 
 def test_names_and_notes_say_they_are_synthetic(clean):

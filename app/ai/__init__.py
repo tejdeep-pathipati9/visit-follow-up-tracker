@@ -15,7 +15,8 @@ from datetime import date
 import os
 from typing import Protocol
 
-from app.constants import ALLOWED_ACTION_TYPES, DUE_SOON_DAYS
+from app.constants import ALLOWED_ACTION_TYPES
+from app.ingestion.settings import app_settings
 from app.models import GeneratedQuery, PromptDecision
 from app.repository import ALLOWED_FUNCTIONS, SENSITIVE_COLUMNS, QueryError
 
@@ -55,15 +56,21 @@ Rules:
 - Put every value taken from the question (names, IDs, dates, numbers, text) in
   `parameters`, referenced with `?` placeholders in order. Use LIKE with '%' for
   partial name matches.
-- Today is {as_of}. Follow-up action types are {action_types}; statuses are 'open'
-  and 'done'. Dates are ISO 'YYYY-MM-DD' text; completed_at is a UTC timestamp.
+- Today is {as_of}. Follow-up action types are {action_types}; statuses are 'open',
+  'done' (completed), and 'closed' (could not be completed; followups.notes says why).
+  followup_history holds every change of a follow-up's status, due_date, or
+  assigned_staff_id (field, old_value, new_value, changed_at, changed_by). Dates are ISO 'YYYY-MM-DD' text;
+  completed_at and changed_at are UTC timestamps.
 - "Overdue" means status = 'open' AND due_date < today. "Due soon" means
-  status = 'open' AND due_date BETWEEN today AND today + {due_soon_days} days.
-  "Unassigned" means status = 'open' AND assigned_staff_id IS NULL.
+  status = 'open' AND due_date BETWEEN today AND today + N days, where N depends on
+  action_type: {due_soon_windows}.
+  "Unassigned" means status = 'open' AND due_date IS NULL (no scheduled date yet).
+  Every follow-up has an assigned staff member (assigned_staff_id is never NULL).
 - A follow-up's patient is found through visits (followups.visit_id -> visits.patient_id).
 - Do not select {hidden}; they are unavailable and always read as NULL.
 - Return readable column aliases and include names alongside IDs. Add ORDER BY,
   and LIMIT {max_rows} unless the question asks for an aggregate.
+- {asker}
 - Write `explanation` as one short sentence in the same language as the question."""
 
 
@@ -71,8 +78,8 @@ class QueryAssistant(Protocol):
     def decide(self, question: str) -> PromptDecision:
         """Classify the intent of the prompt text alone."""
 
-    def generate_sql(self, question: str, schema: str, as_of: date, max_rows: int) -> GeneratedQuery:
-        """Write one parameterized SELECT answering a read-only question."""
+    def generate_sql(self, question: str, schema: str, as_of: date, max_rows: int, asker: str = "") -> GeneratedQuery:
+        """Write one parameterized SELECT answering a read-only question; asker says who is asking."""
 
 
 def to_decision(answers: list) -> PromptDecision:
@@ -112,13 +119,16 @@ class OpenAIQueryAssistant:
         ))
         return to_decision(decision.answers)
 
-    def generate_sql(self, question: str, schema: str, as_of: date, max_rows: int) -> GeneratedQuery:
+    def generate_sql(self, question: str, schema: str, as_of: date, max_rows: int, asker: str = "") -> GeneratedQuery:
         instructions = SQL_INSTRUCTIONS.format(
+            asker=asker or "Answer about every record.",
             schema=schema,
             functions=", ".join(sorted(ALLOWED_FUNCTIONS)),
             as_of=as_of.isoformat(),
             action_types=", ".join(f"'{action}'" for action in ALLOWED_ACTION_TYPES),
-            due_soon_days=DUE_SOON_DAYS,
+            due_soon_windows=", ".join(
+                f"'{action}' {days} days" for action, days in app_settings().due_soon_days_by_action.items()
+            ),
             hidden=", ".join(f"{table}.{column}" for table, column in sorted(SENSITIVE_COLUMNS)),
             max_rows=max_rows,
         )

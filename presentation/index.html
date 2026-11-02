@@ -1,0 +1,460 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Visit Follow-Up Tracker</title>
+<style>
+  :root {
+    --ink: #13263f; --muted: #5b6676; --line: #d9dee5; --soft: #f4f6f9;
+    --brand: #3388c8; --accent: #1f6fae; --accent-soft: #e8f2fa;
+    --red: #c0392b; --red-soft: #fbe7e4; --amber: #b26a00; --amber-soft: #fdf1dc;
+    --gray: #5b6676; --gray-soft: #eceff3;
+    --mark: #e53935;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #0c1a2c; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; color: var(--ink); overflow: hidden; }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .9em; background: var(--soft); padding: 1px 5px; border-radius: 4px; white-space: nowrap; }
+  .stage { position: fixed; inset: 0; display: grid; place-items: center; }
+  .deck { width: 1280px; height: 720px; position: relative; transform-origin: center center; }
+  .slide { position: absolute; inset: 0; background: #fff; padding: 44px 64px 76px; display: none; flex-direction: column; overflow: hidden; box-shadow: 0 10px 40px rgba(0, 0, 0, .35); }
+  .slide.active { display: flex; animation: enter .35s ease-out; }
+  @keyframes enter { from { opacity: 0; } to { opacity: 1; } }
+  /* Feature slides build up: each red circle with its note (see the script). */
+  .build { opacity: 0; transition: opacity .3s ease, transform .3s ease; }
+  .mark.build { transform: scale(1.15); }
+  .inset.build { transform: translateY(8px); }
+  .notes li.build { transform: translateY(6px); }
+  .slide .build.shown { opacity: 1; transform: none; }
+  .eyebrow { font-size: 13px; letter-spacing: .12em; text-transform: uppercase; color: var(--accent); font-weight: 700; margin-bottom: 8px; }
+  h1 { font-size: 34px; font-weight: 700; margin: 0 0 22px; letter-spacing: -.01em; }
+  /* The words to remember on each slide */
+  h1 em { font-style: normal; color: var(--brand); }
+  .body { flex: 1; display: flex; flex-direction: column; justify-content: center; min-height: 0; }
+  .footer { position: absolute; left: 64px; right: 64px; bottom: 16px; display: flex; justify-content: space-between; align-items: center; font-size: 12px; color: var(--muted); border-top: 1px solid var(--line); padding-top: 10px; }
+  .footer .flogo { width: 139px; height: 28px; background: url(assets/logo-navy.png) left center / contain no-repeat; }
+  .footer span:first-of-type { margin-right: auto; margin-left: 12px; }
+  .arrow { color: #9aa4b2; font-size: 28px; line-height: 1; flex: none; }
+
+  /* Line icons from the sprite at the top of <body>; they take the colour of the text around them. */
+  .ic { width: 30px; height: 30px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; color: var(--accent); }
+  .ic.sm { width: 22px; height: 22px; stroke-width: 1.8; }
+
+  /* Navy slides: cover, numbers, demo */
+  .slide.cover { background: var(--ink); color: #fff; padding: 64px 80px 56px; justify-content: space-between; }
+  .logo-white { width: 298px; height: 60px; background: url(assets/logo-white.png) left center / contain no-repeat; }
+  .cover .title { font-size: 56px; font-weight: 700; letter-spacing: -.02em; line-height: 1.05; margin: 0 0 18px; }
+  .cover .subtitle { font-size: 22px; color: #b9d6ee; }
+  .cover .meta { display: flex; justify-content: space-between; align-items: flex-end; font-size: 15px; color: #b9d6ee; border-top: 1px solid rgba(255, 255, 255, .18); padding-top: 18px; }
+
+  /* Agenda: the talk as a numbered line across the slide; the two feature groups are wider */
+  .agenda { display: grid; grid-template-columns: 1fr 1fr 1.3fr 1.3fr 1fr 1fr; gap: 20px; }
+  .ag { position: relative; display: flex; flex-direction: column; gap: 9px; }
+  .ag:not(:last-child)::after { content: ""; position: absolute; top: 25px; left: 52px; right: -20px; height: 2px; background: var(--line); }
+  .ag .n { width: 52px; height: 52px; border-radius: 50%; background: #fff; border: 2px solid var(--brand); color: var(--brand); font-size: 20px; font-weight: 800; display: grid; place-items: center; margin-bottom: 12px; }
+  .ag.group .n { background: var(--brand); color: #fff; }
+  .ag b { font-size: 21px; line-height: 1.25; }
+  .ag > span { font-size: 15px; color: var(--muted); line-height: 1.4; }
+  .ag .chips { display: flex; flex-direction: column; align-items: flex-start; gap: 7px; margin-top: 4px; }
+  .ag .chips span { background: var(--accent-soft); color: var(--accent); border-radius: 999px; padding: 5px 13px; font-size: 15px; font-weight: 600; }
+
+  /* What we built: the product on a blue panel that runs off the slide */
+  .hero .copy { width: 520px; flex: 1; display: flex; flex-direction: column; justify-content: center; position: relative; z-index: 1; }
+  .hero h1 { font-size: 44px; line-height: 1.1; margin-bottom: 30px; }
+  .hero .panel { position: absolute; top: 0; right: 0; bottom: 0; width: 540px; background: linear-gradient(155deg, var(--accent) 0%, var(--brand) 100%); }
+  .hero .product { position: absolute; left: 620px; top: 116px; width: 780px; border-radius: 8px; box-shadow: 0 24px 60px rgba(9, 25, 45, .45); }
+  .caps { display: flex; flex-direction: column; gap: 16px; }
+  .cap { display: grid; grid-template-columns: 30px 1fr; gap: 16px; align-items: start; }
+  .cap b { display: block; font-size: 18px; margin-bottom: 2px; }
+  .cap span { font-size: 15px; color: var(--muted); line-height: 1.4; }
+
+  /* When a follow-up is flagged: a timeline, and a dashed box for "no date yet" */
+  .pill { border-radius: 999px; padding: 6px 12px; font-size: 14px; font-weight: 700; text-align: center; }
+  .pill.gray { background: var(--gray-soft); color: var(--gray); }
+  .flagging { display: grid; grid-template-columns: 1fr 270px; gap: 40px; }
+  .tl { display: block; width: 100%; height: auto; overflow: visible; }
+  .tl text { font-size: 14px; fill: var(--muted); }
+  .tl .t { font-size: 17px; font-weight: 700; }
+  .tl .mk { font-size: 13px; font-weight: 700; fill: var(--ink); }
+  .nodate { border: 1.5px dashed #b8c0cb; border-radius: 6px; padding: 14px 18px; display: flex; flex-direction: column; justify-content: center; gap: 10px; }
+  .nodate .pill { align-self: flex-start; }
+  .nodate span { font-size: 14px; color: var(--muted); line-height: 1.4; }
+  .answers { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0 32px; margin-top: 40px; }
+  .answer { border-top: 1px solid var(--line); padding: 14px 0 18px; display: grid; grid-template-columns: 22px 1fr; gap: 12px; align-items: start; }
+  .answer b { display: block; font-size: 16px; margin-bottom: 4px; }
+  .answer span { font-size: 14.5px; color: var(--muted); line-height: 1.4; }
+
+  /* Feature slides: a screenshot with numbered red circles */
+  .feature { flex: 1; display: grid; grid-template-columns: 820px 1fr; gap: 26px; align-items: center; min-height: 0; }
+  .shot { position: relative; width: 820px; aspect-ratio: 1440 / 900; }
+  .shot img { display: block; width: 100%; height: 100%; border-radius: 4px; box-shadow: 0 2px 10px rgba(19, 38, 63, .10); border: 1px solid var(--line); }
+  /* The line is an outline, drawn outside the element's box, so it never covers what it circles. */
+  .mark { position: absolute; outline: 4px solid var(--mark); outline-offset: 4px; }
+  /* A second screenshot over the first, for what opens after a click */
+  .shot .inset { position: absolute; right: 10px; bottom: -18px; width: 300px; height: auto; border-radius: 6px; box-shadow: 0 18px 40px rgba(9, 25, 45, .35); }
+  .mark .n { position: absolute; left: -42px; top: calc(50% - 13px); width: 26px; height: 26px; border-radius: 50%; background: var(--mark); color: #fff; font-size: 14px; font-weight: 800; display: grid; place-items: center; box-shadow: 0 0 0 3px #fff; }
+  .mark.badge-top .n { left: calc(50% - 13px); top: -42px; }
+  .notes ol { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 18px; }
+  .notes li { display: grid; grid-template-columns: 30px 1fr; gap: 12px; }
+  .notes li .n { width: 26px; height: 26px; border-radius: 50%; background: var(--mark); color: #fff; font-size: 14px; font-weight: 800; display: grid; place-items: center; }
+  .notes b { display: block; font-size: 17px; margin-bottom: 4px; }
+  .notes li span { font-size: 14.5px; color: var(--muted); line-height: 1.4; }
+  .footnote { margin-top: 18px; font-size: 13px; color: var(--muted); line-height: 1.5; }
+
+  /* Running it: three versions in turn over one store of records */
+  .ops { flex: 1; display: grid; grid-template-columns: 1fr 330px; gap: 40px; align-items: center; min-height: 0; }
+  .ops-visual { background: var(--accent-soft); border-radius: 8px; padding: 36px 32px 32px; }
+  .vers { display: flex; align-items: center; justify-content: space-between; }
+  .vers .arrow { font-size: 26px; }
+  .ver { position: relative; width: 170px; background: #fff; border: 1px solid #c9dcec; border-radius: 8px; padding: 14px 12px; display: flex; flex-direction: column; align-items: center; gap: 4px; text-align: center; }
+  .ver.new { border: 2px solid var(--brand); }
+  .ver b { font-size: 20px; }
+  .ver span { font-size: 13px; color: var(--muted); }
+  .ver::after { content: ""; position: absolute; left: 50%; top: 100%; height: 34px; border-left: 2px dashed #8fb3d3; }
+  .volume { margin-top: 34px; display: grid; grid-template-columns: 30px 1fr; gap: 14px; align-items: center; background: var(--ink); color: #fff; border-radius: 8px; padding: 16px 20px; }
+  .volume .ic { color: #7cc0f0; }
+  .volume b { display: block; font-size: 17px; margin-bottom: 2px; }
+  .volume span { font-size: 14px; color: #b9cde0; }
+  .ops-side { display: flex; flex-direction: column; }
+  .step { display: grid; grid-template-columns: 22px 1fr; gap: 12px; align-items: start; padding: 16px 0; border-top: 1px solid var(--line); }
+  .step:last-child { border-bottom: 1px solid var(--line); }
+  .step b { display: block; font-size: 16px; margin-bottom: 3px; }
+  .step span { font-size: 14px; color: var(--muted); line-height: 1.4; }
+
+  .nav { position: fixed; top: 10px; right: 14px; display: flex; gap: 8px; align-items: center; color: #cfd6df; font-size: 13px; z-index: 10; opacity: .2; transition: opacity .2s; }
+  .nav:hover { opacity: 1; }
+  .nav button { background: #3a4350; color: #fff; border: 0; border-radius: 6px; padding: 6px 12px; font-size: 14px; cursor: pointer; }
+  :fullscreen body { background: #000; }
+  :fullscreen .slide { box-shadow: none; }
+  :fullscreen .nav { opacity: 0; }
+  :fullscreen .nav:hover { opacity: 1; }
+  @media print {
+    @page { size: 1280px 720px; margin: 0; }
+    * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    html, body { background: #fff; overflow: visible; height: auto; }
+    .stage { position: static; display: block; }
+    .deck { transform: none !important; height: auto; }
+    .slide { position: relative; display: flex !important; height: 720px; box-shadow: none; break-after: page; animation: none !important; }
+    .build { opacity: 1 !important; transform: none !important; transition: none !important; }
+    .slide:last-child { break-after: auto; }
+    .nav { display: none; }
+  }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-flag" viewBox="0 0 24 24"><path d="M5 21V4"/><path d="M5 4h12l-2.5 4.5L17 13H5"/></symbol>
+  <symbol id="i-lock" viewBox="0 0 24 24"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></symbol>
+  <symbol id="i-history" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 9-9 9.7 9.7 0 0 0-6.7 2.7L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m21 21-5-5"/><path d="m8 11 2 2 4-4"/></symbol>
+  <symbol id="i-printer" viewBox="0 0 24 24"><path d="M7 9V3h10v6"/><path d="M7 17H5a2 2 0 0 1-2-2v-4a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2h-2"/><path d="M7 14h10v7H7z"/></symbol>
+  <symbol id="i-list" viewBox="0 0 24 24"><path d="M10 6h11M10 12h11M10 18h11"/><path d="m3 6 1.5 1.5L7 5M3 12l1.5 1.5L7 11M3 18l1.5 1.5L7 17"/></symbol>
+  <symbol id="i-file-x" viewBox="0 0 24 24"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/><path d="m9.5 12.5 5 5M14.5 12.5l-5 5"/></symbol>
+  <symbol id="i-calendar" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></symbol>
+  <symbol id="i-box" viewBox="0 0 24 24"><path d="M21 8 12 3 3 8v8l9 5 9-5z"/><path d="m3 8 9 5 9-5M12 13v8"/></symbol>
+  <symbol id="i-db" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/><path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></symbol>
+  <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3 4 6v6c0 5 3.4 8.3 8 9 4.6-.7 8-4 8-9V6z"/><path d="m9 12 2 2 4-4"/></symbol>
+</svg>
+<div class="stage">
+<div class="deck" id="deck">
+
+  <section class="slide cover">
+    <div class="logo-white"></div>
+    <div>
+      <div class="title">Visit Follow-Up Tracker</div>
+      <div class="subtitle">Every follow-up after a visit, in one place, flagged before it slips</div>
+    </div>
+    <div class="meta">
+      <div>Sanket Deshmukh · Jihyung Park · Tejdeep Pathipati</div>
+    </div>
+  </section>
+
+  <section class="slide">
+    <div class="eyebrow">Agenda</div>
+    <h1>What we will show</h1>
+    <div class="body">
+      <div class="agenda">
+        <div class="ag"><div class="n">1</div><b>What we built</b><span>The tracker at a glance</span></div>
+        <div class="ag"><div class="n">2</div><b>The clinic's requirements</b><span>When a follow-up is flagged, and the rules it follows</span></div>
+        <div class="ag group"><div class="n">3</div><b>Tracking follow-ups</b><div class="chips"><span>Import</span><span>Flags</span><span>History</span></div></div>
+        <div class="ag group"><div class="n">4</div><b>Seeing and sharing</b><div class="chips"><span>Access</span><span>Plain-English questions</span><span>Report</span></div></div>
+        <div class="ag"><div class="n">5</div><b>Running it</b><span>Updates, backups, and keeping records for 10 years</span></div>
+        <div class="ag"><div class="n">6</div><b>Live demo</b><span>Then questions</span></div>
+      </div>
+    </div>
+    <div class="footer"><div class="flogo"></div><span>Visit Follow-Up Tracker</span><span class="pg"></span></div>
+  </section>
+
+  <section class="slide hero">
+    <div class="panel"></div>
+    <img class="product" src="screenshots/02-followups.png" alt="The follow-up list with overdue, due soon, and unassigned counts">
+    <div class="copy">
+      <div class="eyebrow">What we built</div>
+      <h1>Every follow-up after a visit, <em>on one screen</em></h1>
+      <div class="caps">
+        <div class="cap"><svg class="ic"><use href="#i-flag"/></svg><div><b>Flags what is slipping</b><span>Overdue, due soon, or no date yet, by the clinic's own windows</span></div></div>
+        <div class="cap"><svg class="ic"><use href="#i-lock"/></svg><div><b>Each person sees their own</b><span>Managers see every follow-up</span></div></div>
+        <div class="cap"><svg class="ic"><use href="#i-history"/></svg><div><b>Nothing is lost</b><span>Every change is kept with who, when, and why</span></div></div>
+        <div class="cap"><svg class="ic"><use href="#i-search"/></svg><div><b>Ask in plain English</b><span>Read-only answers from the records</span></div></div>
+        <div class="cap"><svg class="ic"><use href="#i-printer"/></svg><div><b>Prints the report</b><span>And downloads any list as a CSV</span></div></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="slide">
+    <div class="eyebrow">The clinic's requirements</div>
+    <h1>Built to <em>the clinic's requirements</em></h1>
+    <div class="body">
+      <div class="flagging">
+        <svg class="tl" viewBox="0 0 842 126" role="img" aria-label="An open follow-up is due soon in the days before its scheduled date, including the date, and overdue from the day after">
+          <text class="t" x="0" y="16">On track</text>
+          <text class="t" x="340" y="16" style="fill:var(--amber)">Due soon</text>
+          <text class="t" x="634" y="16" style="fill:var(--red)">Overdue</text>
+          <rect x="0" y="30" width="336" height="14" rx="2" fill="#dfe3e9"/>
+          <rect x="340" y="30" width="280" height="14" rx="2" fill="#f0b44c"/>
+          <rect x="624" y="30" width="206" height="14" rx="2" fill="#dd5a4f"/><path d="M829 25 842 37 829 49z" fill="#dd5a4f"/>
+          <line x1="622" y1="22" x2="622" y2="54" stroke="#13263f" stroke-width="2.5"/>
+          <text class="mk" x="622" y="72" text-anchor="middle">Scheduled date</text>
+          <text x="0" y="100">Before the due-soon window</text>
+          <text x="340" y="100">Lab: 3 days before</text>
+          <text x="340" y="120">Referral, recheck: 14 days before</text>
+          <text x="634" y="100">From the day after</text>
+          <text x="634" y="120">until done or closed</text>
+        </svg>
+        <div class="nodate">
+          <span class="pill gray">Unassigned</span>
+          <span>No date booked yet, so it cannot be due soon or overdue until it has one.</span>
+        </div>
+      </div>
+      <div class="answers">
+        <div class="answer"><svg class="ic sm"><use href="#i-list"/></svg><div><b>Statuses</b><span>Open, done, or closed; closing needs the reason</span></div></div>
+        <div class="answer"><svg class="ic sm"><use href="#i-file-x"/></svg><div><b>Bad file</b><span>Reject the whole file; save nothing</span></div></div>
+        <div class="answer"><svg class="ic sm"><use href="#i-lock"/></svg><div><b>Access</b><span>Staff see only their own follow-ups</span></div></div>
+        <div class="answer"><svg class="ic sm"><use href="#i-printer"/></svg><div><b>Reports</b><span>Must be printable</span></div></div>
+        <div class="answer"><svg class="ic sm"><use href="#i-history"/></svg><div><b>History</b><span>Keep visits, appointments, and every change</span></div></div>
+        <div class="answer"><svg class="ic sm"><use href="#i-calendar"/></svg><div><b>Retention</b><span>Keep 10 years, then delete</span></div></div>
+      </div>
+    </div>
+    <div class="footer"><div class="flogo"></div><span>Visit Follow-Up Tracker</span><span class="pg"></span></div>
+  </section>
+
+  <section class="slide">
+    <div class="eyebrow">Tracking follow-ups · Import</div>
+    <h1>A file with one bad record is <em>refused whole</em></h1>
+    <div class="feature">
+      <div class="shot">
+        <img src="screenshots/04-import-rejected.png" alt="">
+          <div class="mark badge-left" style="left:24.65%;top:26.11%;width:31.25%;height:3.33%;border-radius:9px"><span class="n">1</span></div>
+          <div class="mark badge-left" style="left:24.79%;top:32.22%;width:50.42%;height:36.44%;border-radius:18px"><span class="n">2</span></div>
+      </div>
+      <div class="notes">
+        <ol>
+          <li><span class="n">1</span><div><b>Nothing is saved</b><span>The clinic asked for all or nothing, so the database stays as it was.</span></div></li>
+          <li><span class="n">2</span><div><b>Every problem, with its reason</b><span>Missing fields, bad dates, unknown action types, and missing patients, each named so the file can be fixed.</span></div></li>
+        </ol>
+      </div>
+    </div>
+    <div class="footer"><div class="flogo"></div><span>Visit Follow-Up Tracker</span><span class="pg"></span></div>
+  </section>
+
+  <section class="slide">
+    <div class="eyebrow">Tracking follow-ups · Flags</div>
+    <h1>Flags show <em>what is slipping</em></h1>
+    <div class="feature">
+      <div class="shot">
+        <img src="screenshots/02-followups.png" alt="">
+          <div class="mark badge-left" style="left:1.25%;top:9.44%;width:32.50%;height:10.44%;border-radius:18px"><span class="n">1</span></div>
+          <div class="mark badge-top" style="left:65.07%;top:33.56%;width:7.43%;height:18.22%;border-radius:18px"><span class="n">2</span></div>
+          <div class="mark badge-left" style="left:58.06%;top:54.22%;width:7.57%;height:14.22%;border-radius:18px"><span class="n">3</span></div>
+          <img class="inset" data-step="3" src="screenshots/08-close-reason.png" alt="The box that asks why a follow-up is closed">
+      </div>
+      <div class="notes">
+        <ol>
+          <li><span class="n">1</span><div><b>Today at a glance</b><span>Overdue, due soon, and unassigned counts for the “As of” date.</span></div></li>
+          <li><span class="n">2</span><div><b>One flag per follow-up</b><span>Overdue the day after its date; due soon inside its window; unassigned when no date is set.</span></div></li>
+          <li><span class="n">3</span><div><b>Change it in place</b><span>Choosing Closed asks for the reason, which is kept in the history.</span></div></li>
+        </ol>
+      </div>
+    </div>
+    <div class="footer"><div class="flogo"></div><span>Visit Follow-Up Tracker</span><span class="pg"></span></div>
+  </section>
+
+  <section class="slide">
+    <div class="eyebrow">Tracking follow-ups · History</div>
+    <h1>Every change is kept, <em>with who made it</em></h1>
+    <div class="feature">
+      <div class="shot">
+        <img src="screenshots/03-history.png" alt="">
+          <div class="mark badge-left" style="left:66.88%;top:22.33%;width:9.44%;height:3.22%;border-radius:8px"><span class="n">1</span></div>
+          <div class="mark badge-left" style="left:56.18%;top:39.11%;width:43.26%;height:14.00%;border-radius:18px"><span class="n">2</span></div>
+      </div>
+      <div class="notes">
+        <ol>
+          <li><span class="n">1</span><div><b>Closed, with the reason</b><span>“Patient unreachable after three calls.”</span></div></li>
+          <li><span class="n">2</span><div><b>Reschedule, hand-off, close</b><span>Each row has the time, the person, and their note.</span></div></li>
+        </ol>
+      </div>
+    </div>
+    <div class="footer"><div class="flogo"></div><span>Visit Follow-Up Tracker</span><span class="pg"></span></div>
+  </section>
+
+  <section class="slide">
+    <div class="eyebrow">Seeing and sharing · Access</div>
+    <h1>Each person sees <em>their own follow-ups</em></h1>
+    <div class="feature">
+      <div class="shot">
+        <img src="screenshots/06-nurse.png" alt="">
+          <div class="mark badge-left" style="left:81.32%;top:2.56%;width:17.43%;height:3.22%;border-radius:8px"><span class="n">1</span></div>
+          <div class="mark badge-left" style="left:1.25%;top:9.44%;width:32.50%;height:10.44%;border-radius:18px"><span class="n">2</span></div>
+          <div class="mark badge-left" style="left:73.12%;top:33.56%;width:11.94%;height:18.22%;border-radius:18px"><span class="n">3</span></div>
+      </div>
+      <div class="notes">
+        <ol>
+          <li><span class="n">1</span><div><b>Signed in by email</b><span>1.0.0 is for internal use; passwords come in 1.1.0.</span></div></li>
+          <li><span class="n">2</span><div><b>Her numbers only</b><span>Counts cover only the follow-ups assigned to her.</span></div></li>
+          <li><span class="n">3</span><div><b>Her rows only</b><span>Lists, CSV files, the report, and her questions use the same rule.</span></div></li>
+        </ol>
+      </div>
+    </div>
+    <div class="footer"><div class="flogo"></div><span>Visit Follow-Up Tracker</span><span class="pg"></span></div>
+  </section>
+
+  <section class="slide">
+    <div class="eyebrow">Seeing and sharing · Plain-English questions</div>
+    <h1>Anyone can ask; <em>each gets their own answer</em></h1>
+    <div class="feature">
+      <div class="shot">
+        <img src="screenshots/07-ask.png" alt="">
+          <div class="mark badge-left" style="left:2.85%;top:31.44%;width:22.08%;height:1.78%;border-radius:5px;outline-offset:2px"><span class="n">1</span></div>
+          <div class="mark badge-left" style="left:1.67%;top:57.44%;width:96.67%;height:15.11%;border-radius:12px;outline-offset:2px"><span class="n">2</span></div>
+          <div class="mark badge-left" style="left:1.74%;top:10.22%;width:9.86%;height:8.89%;border-radius:12px"><span class="n">3</span></div>
+      </div>
+      <div class="notes">
+        <ol>
+          <li><span class="n">1</span><div><b>Limited to the asker</b><span>A nurse&#x27;s question reads only her follow-ups. The database enforces it, not the model.</span></div></li>
+          <li><span class="n">2</span><div><b>A plain answer</b><span>One sentence, then the rows: lab 5, recheck 3, referral 2.</span></div></li>
+          <li><span class="n">3</span><div><b>Matches the screen</b><span>5 + 3 + 2 = 10, her overdue count.</span></div></li>
+        </ol>
+        <p class="footnote">Questions cannot change records: “Mark F001 as done” is refused. The AI model sees the question, the table layout, and the asker's staff ID, never patient records.</p>
+      </div>
+    </div>
+    <div class="footer"><div class="flogo"></div><span>Visit Follow-Up Tracker</span><span class="pg"></span></div>
+  </section>
+
+  <section class="slide">
+    <div class="eyebrow">Seeing and sharing · Report</div>
+    <h1>A report the manager <em>can print</em></h1>
+    <div class="feature">
+      <div class="shot">
+        <img src="screenshots/05-report.png" alt="">
+          <div class="mark badge-left" style="left:16.67%;top:16.67%;width:33.54%;height:4.22%;border-radius:16px"><span class="n">1</span></div>
+          <div class="mark badge-left" style="left:16.67%;top:27.11%;width:66.67%;height:1.56%;border-radius:4px"><span class="n">2</span></div>
+      </div>
+      <div class="notes">
+        <ol>
+          <li><span class="n">1</span><div><b>Totals by flag</b><span>What needs attention today.</span></div></li>
+          <li><span class="n">2</span><div><b>Grouped by flag</b><span>Patient ID, action, scheduled date, days late, and staff. Printing hides the buttons.</span></div></li>
+        </ol>
+      </div>
+    </div>
+    <div class="footer"><div class="flogo"></div><span>Visit Follow-Up Tracker</span><span class="pg"></span></div>
+  </section>
+
+  <section class="slide">
+    <div class="eyebrow">Running it</div>
+    <h1>Updates change the program, <em>never the records</em></h1>
+    <div class="ops">
+      <div class="ops-visual">
+        <div class="vers">
+          <div class="ver"><svg class="ic"><use href="#i-box"/></svg><b>1.0.0</b><span>Today</span></div>
+          <span class="arrow">→</span>
+          <div class="ver new"><svg class="ic"><use href="#i-box"/></svg><b>1.1.0</b><span>Adds passwords</span></div>
+          <span class="arrow">→</span>
+          <div class="ver"><svg class="ic"><use href="#i-box"/></svg><b>1.0.0</b><span>Roll back if needed</span></div>
+        </div>
+        <div class="volume"><svg class="ic"><use href="#i-db"/></svg><div><b>The clinic's records and their history</b><span>Stored apart from the program, so every version finds them where they were</span></div></div>
+      </div>
+      <div class="ops-side">
+        <div class="step"><svg class="ic sm"><use href="#i-box"/></svg><div><b>Installs the same way anywhere</b><span>One package sets it up identically on any clinic computer.</span></div></div>
+        <div class="step"><svg class="ic sm"><use href="#i-shield"/></svg><div><b>Backups that are checked</b><span>Every backup is checked and test-restored before anyone relies on it.</span></div></div>
+        <div class="step"><svg class="ic sm"><use href="#i-calendar"/></svg><div><b>Kept 10 years, then deleted</b><span>As the clinic asked; a preview shows what would be deleted first.</span></div></div>
+      </div>
+    </div>
+    <div class="footer"><div class="flogo"></div><span>Visit Follow-Up Tracker</span><span class="pg"></span></div>
+  </section>
+
+  <section class="slide cover">
+    <div class="logo-white"></div>
+    <div>
+      <div class="title">Demo</div>
+    </div>
+    <div class="meta"><div>Then questions</div></div>
+  </section>
+</div>
+</div>
+<div class="nav">
+  <button id="prev" aria-label="Back">‹</button>
+  <span id="count"></span>
+  <button id="next" aria-label="Next">›</button>
+  <button id="full" aria-label="Full screen" title="Full screen (F)">⛶</button>
+</div>
+<script>
+  // Right arrow, Space, or Page Down shows the next red circle, then the next slide; Left
+  // goes back. F or double-click for full screen; printing gives a PDF with everything shown.
+  const slides = [...document.querySelectorAll(".slide")];
+  const deck = document.getElementById("deck");
+  // Each slide's steps: every red circle with its note; a footnote comes with the last one.
+  const steps = slides.map((slide) => {
+    const notes = [...slide.querySelectorAll(".notes li")];
+    const list = [...slide.querySelectorAll(".mark")].map((mark, i) => [mark, notes[i]].filter(Boolean));
+    if (list.length) list.at(-1).push(...slide.querySelectorAll(".notes .footnote"));
+    // Anything marked data-step="N" appears with circle N.
+    slide.querySelectorAll("[data-step]").forEach((element) => list[Number(element.dataset.step) - 1]?.push(element));
+    list.flat().forEach((element) => element.classList.add("build"));
+    return list;
+  });
+  let current = Math.min(Math.max(parseInt(location.hash.slice(1), 10) - 1 || 0, 0), slides.length - 1);
+  let shown = 0;
+  slides.forEach((slide, i) => { const pg = slide.querySelector(".pg"); if (pg) pg.textContent = `${i + 1} / ${slides.length}`; });
+  function show(index, step = 0) {
+    current = Math.min(Math.max(index, 0), slides.length - 1);
+    shown = step === "all" ? steps[current].length : step;
+    slides.forEach((slide, i) => slide.classList.toggle("active", i === current));
+    steps[current].forEach((group, i) => group.forEach((element) => element.classList.toggle("shown", i < shown)));
+    document.getElementById("count").textContent = `${current + 1} / ${slides.length}`;
+    history.replaceState(null, "", `#${current + 1}`);
+  }
+  function next() {
+    if (shown < steps[current].length) show(current, shown + 1);
+    else if (current < slides.length - 1) show(current + 1);
+  }
+  function back() {
+    if (shown > 0) show(current, shown - 1);
+    else if (current > 0) show(current - 1, "all");
+  }
+  function fit() {
+    const margin = document.fullscreenElement ? 1 : 0.96;
+    deck.style.transform = `scale(${Math.min(window.innerWidth / 1280, window.innerHeight / 720) * margin})`;
+  }
+  function toggleFullscreen() {
+    if (document.fullscreenElement) document.exitFullscreen(); else document.documentElement.requestFullscreen?.();
+  }
+  document.addEventListener("keydown", (event) => {
+    if (["ArrowRight", "PageDown", " "].includes(event.key)) { event.preventDefault(); next(); }
+    if (["ArrowLeft", "PageUp"].includes(event.key)) { event.preventDefault(); back(); }
+    if (event.key === "Home") show(0);
+    if (event.key === "End") show(slides.length - 1, "all");
+    if (event.key === "f" || event.key === "F") toggleFullscreen();
+  });
+  document.getElementById("prev").onclick = back;
+  document.getElementById("next").onclick = next;
+  document.getElementById("full").onclick = toggleFullscreen;
+  document.addEventListener("dblclick", toggleFullscreen);
+  document.addEventListener("fullscreenchange", fit);
+  window.addEventListener("resize", fit);
+  fit();
+  show(current);
+</script>
+</body>
+</html>

@@ -1,4 +1,4 @@
 {
   "allowed_action_types": ["lab", "referral", "recheck"],
-  "due_soon_days_by_action": {"lab": 7, "referral": 14, "recheck": 14}
+  "due_soon_days_by_action": {"lab": 3, "referral": 14, "recheck": 14}
 }

@@ -57,12 +57,10 @@ def test_valid_follow_up_is_accepted_and_dates_are_parsed():
     assert result.status == "open"
 
 
-def test_follow_up_without_assigned_staff_is_accepted():
+def test_follow_up_without_assigned_staff_is_rejected():
+    # Every follow-up comes from a patient visit, so a staff member is always responsible.
     for raw in (followup(assigned_staff_id=None), {k: v for k, v in followup().items() if k != "assigned_staff_id"}):
-        result = validate_record("followup", raw)
-
-        assert isinstance(result, FollowUpRecord)
-        assert result.assigned_staff_id is None
+        assert "assigned_staff_id" in reject("followup", raw).reason
 
 
 def test_follow_up_status_defaults_to_open():
@@ -71,32 +69,27 @@ def test_follow_up_status_defaults_to_open():
     assert validate_record("followup", raw).status == "open"
 
 
-def test_closed_follow_up_with_closure_time_is_accepted_with_or_without_a_reason():
-    with_reason = validate_record(
-        "followup", followup(status="closed", completed_at="2026-10-21T12:00:00Z", closure_reason="completed")
-    )
-    without_reason = validate_record("followup", followup(status="closed", completed_at="2026-10-21T12:00:00Z"))
+def test_done_follow_up_with_completion_time_is_accepted():
+    result = validate_record("followup", followup(status="done", completed_at="2026-10-21T12:00:00Z"))
 
-    assert isinstance(with_reason, FollowUpRecord)
-    assert with_reason.closure_reason == "completed"
-    assert isinstance(without_reason, FollowUpRecord)
-    assert without_reason.closure_reason is None
+    assert isinstance(result, FollowUpRecord)
+    assert (result.status, result.completed_at) == ("done", "2026-10-21T12:00:00Z")
 
 
-@pytest.mark.parametrize("reason", ["completed", "patient_declined", "unable_to_reach", "appointment_cancelled"])
-def test_every_closure_reason_is_accepted(reason):
-    result = validate_record("followup", followup(status="closed", completed_at="2026-10-21", closure_reason=reason))
+@pytest.mark.parametrize("reason", ["Patient unreachable after three calls", "Did not return", "No results sent"])
+def test_closed_follow_up_with_a_reason_in_notes_is_accepted(reason):
+    result = validate_record("followup", followup(status="closed", completed_at="2026-10-21", notes=reason))
 
-    assert result.closure_reason == reason
+    assert (result.status, result.notes) == ("closed", reason)
 
 
-def test_notes_are_optional_free_text_on_open_and_closed_follow_ups():
+def test_notes_are_optional_free_text_unless_closed():
     text = "Patient asked to be called after 5pm.\nSecond line, with punctuation: ok!"
     open_result = validate_record("followup", followup(notes=f"  {text}  "))
-    closed_result = validate_record("followup", followup(status="closed", completed_at="2026-10-21", notes=text))
+    done_result = validate_record("followup", followup(status="done", completed_at="2026-10-21", notes=text))
 
     assert open_result.notes == text
-    assert closed_result.notes == text
+    assert done_result.notes == text
     assert validate_record("followup", followup()).notes is None
     assert validate_record("followup", followup(notes=None)).notes is None
 
@@ -120,7 +113,7 @@ def test_blank_notes_are_treated_as_no_notes(blank):
 )
 def test_completion_time_is_stored_in_one_utc_format(given, stored):
     # Searches read the first 10 characters of completed_at as the date.
-    result = validate_record("followup", followup(status="closed", completed_at=given))
+    result = validate_record("followup", followup(status="done", completed_at=given))
 
     assert result.completed_at == stored
 
@@ -143,10 +136,15 @@ def test_valid_patient_staff_episode_and_visit_are_accepted():
     assert isinstance(validate_record("visit", visit()), VisitRecord)
 
 
-def test_open_episode_and_visit_without_staff_or_notes_are_accepted():
+def test_open_episode_and_visit_without_notes_are_accepted():
     assert validate_record("episode", episode(closed_at=None)).closed_at is None
-    result = validate_record("visit", visit(staff_id=None, notes=None))
-    assert result.staff_id is None and result.notes is None
+    assert validate_record("visit", visit(notes=None)).notes is None
+
+
+@pytest.mark.parametrize("raw", [visit(staff_id=None), {k: v for k, v in visit().items() if k != "staff_id"}])
+def test_visit_without_staff_is_rejected(raw):
+    # A visit is a consultation, test, or treatment, so someone always carries it out.
+    assert "staff_id" in reject("visit", raw).reason
 
 
 def test_episode_closed_on_the_day_it_opened_is_accepted():
@@ -156,7 +154,7 @@ def test_episode_closed_on_the_day_it_opened_is_accepted():
 # --- follow-up rejections -----------------------------------------------------
 
 
-@pytest.mark.parametrize("field", ["followup_id", "visit_id", "action_type", "due_date"])
+@pytest.mark.parametrize("field", ["followup_id", "visit_id", "action_type"])
 def test_follow_up_missing_required_field_is_rejected_naming_the_field(field):
     raw = {k: v for k, v in followup().items() if k != field}
 
@@ -177,10 +175,19 @@ def test_follow_up_identifier_longer_than_limit_is_rejected():
 
 
 @pytest.mark.parametrize(
-    "value", ["2026-13-45", "2026-02-30", "not a date", "20/10/2026", "20261020", "", None, 20261020, 1.5]
+    "value", ["2026-13-45", "2026-02-30", "not a date", "20/10/2026", "20261020", "", 20261020, 1.5]
 )
 def test_follow_up_invalid_due_date_is_rejected(value):
     assert "due_date" in reject("followup", followup(due_date=value)).reason
+
+
+def test_follow_up_without_a_scheduled_date_is_accepted_as_unassigned():
+    missing = {k: v for k, v in followup().items() if k != "due_date"}
+
+    for raw in (missing, followup(due_date=None)):
+        result = validate_record("followup", raw)
+        assert isinstance(result, FollowUpRecord)
+        assert result.due_date is None
 
 
 def test_follow_up_unsupported_action_type_lists_the_allowed_types():
@@ -218,31 +225,23 @@ def test_follow_up_with_invalid_completion_time_is_rejected():
     assert "completed_at" in reject("followup", followup(status="closed", completed_at="yesterday")).reason
 
 
-def test_done_is_no_longer_a_valid_status():
-    result = reject("followup", followup(status="done", completed_at="2026-10-21"))
-
-    assert "status" in result.reason
-    assert "closed" in result.reason
-
-
-def test_closed_follow_up_without_closure_time_is_rejected():
-    assert "completed_at" in reject("followup", followup(status="closed")).reason
+@pytest.mark.parametrize("status", ["done", "closed"])
+def test_finished_follow_up_without_completion_time_is_rejected(status):
+    assert "completed_at" in reject("followup", followup(status=status, notes="Reason")).reason
+    assert "completed_at" in reject("followup", followup(status=status, completed_at=None, notes="Reason")).reason
 
 
-def test_closed_follow_up_with_null_closure_time_is_rejected():
-    assert "completed_at" in reject("followup", followup(status="closed", completed_at=None)).reason
+@pytest.mark.parametrize("notes", [None, "", "   "])
+def test_closed_follow_up_without_a_reason_is_rejected(notes):
+    result = reject("followup", followup(status="closed", completed_at="2026-10-21", notes=notes))
+
+    assert "notes" in result.reason
+    assert "reason" in result.reason
 
 
-def test_open_follow_up_with_closure_reason_is_rejected():
+def test_closure_reason_field_is_not_accepted():
+    # The reason goes in notes, as the clinic asked.
     assert "closure_reason" in reject("followup", followup(closure_reason="completed")).reason
-
-
-@pytest.mark.parametrize("reason", ["declined", "Completed", "", 3, "other"])
-def test_unsupported_closure_reason_lists_the_allowed_reasons(reason):
-    result = reject("followup", followup(status="closed", completed_at="2026-10-21", closure_reason=reason))
-
-    assert "closure_reason" in result.reason
-    assert "patient_declined" in result.reason
 
 
 @pytest.mark.parametrize("notes", [5, ["a"], "x" * 2001])
@@ -250,11 +249,11 @@ def test_notes_must_be_text_within_the_length_limit(notes):
     assert "notes" in reject("followup", followup(notes=notes)).reason
 
 
-def test_closed_follow_up_missing_time_and_with_bad_reason_reports_both():
-    result = reject("followup", followup(status="closed", closure_reason="nope"))
+def test_closed_follow_up_missing_time_and_reason_reports_both():
+    result = reject("followup", followup(status="closed"))
 
     assert "completed_at" in result.reason
-    assert "closure_reason" in result.reason
+    assert "notes" in result.reason
 
 
 def test_follow_up_with_unexpected_field_is_rejected():
