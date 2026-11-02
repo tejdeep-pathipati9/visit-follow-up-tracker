@@ -1,3 +1,10 @@
+FROM node:24-slim AS ui-build
+WORKDIR /ui
+COPY ui/package.json ui/package-lock.json ./
+RUN npm ci
+COPY ui/ ./
+RUN npm run build
+
 FROM python:3.11-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -16,6 +23,7 @@ RUN groupadd --system tracker \
 
 COPY app/ ./app/
 COPY config/ ./config/
+COPY --from=ui-build /ui/dist ./ui/dist
 COPY data/sample_visits.json ./data/sample_visits.json
 COPY scripts/table_generate.py ./scripts/table_generate.py
 COPY scripts/create_manager.py ./scripts/create_manager.py

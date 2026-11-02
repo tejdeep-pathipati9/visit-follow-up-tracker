@@ -7,7 +7,7 @@ import sqlite3
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -21,6 +21,8 @@ app.include_router(session_router)
 app.include_router(router)
 app.mount("/static", StaticFiles(directory=Path(__file__).parent / "static"), name="static")
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
+UI_DIST = Path(__file__).resolve().parents[1] / "ui" / "dist"
+app.mount("/assets", StaticFiles(directory=UI_DIST / "assets", check_dir=False), name="ui-assets")
 
 
 @app.exception_handler(QueryError)
@@ -48,7 +50,15 @@ def database_error(request: Request, error: sqlite3.Error) -> JSONResponse:
 
 @app.get("/", response_class=HTMLResponse, include_in_schema=False)
 def index(request: Request):
-    return templates.TemplateResponse(request=request, name="index.html")
+    entry = UI_DIST / "index.html"
+    if entry.is_file():
+        return FileResponse(entry, headers={"Cache-Control": "no-cache"})
+    return HTMLResponse(
+        "<h1>Visit Follow-Up Tracker</h1><p>Build the UI with "
+        "<code>npm ci --prefix ui &amp;&amp; npm run build --prefix ui</code>, "
+        "or use the Vite development server. Synthetic data only.</p>",
+        status_code=503,
+    )
 
 
 @app.get("/report", response_class=HTMLResponse, include_in_schema=False)

@@ -39,3 +39,9 @@ dist
 **/.DS_Store
 tests
 presentation
+
+.impeccable
+PRODUCT.md
+**/node_modules
+ui/dist
+ui/coverage

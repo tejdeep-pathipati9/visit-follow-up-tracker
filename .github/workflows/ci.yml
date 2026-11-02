@@ -16,6 +16,17 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - name: Install frontend dependencies
+        run: npm ci --prefix ui
+      - name: Test frontend interactions
+        run: npm test --prefix ui
+      - name: Typecheck and build frontend
+        run: npm run build --prefix ui
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"

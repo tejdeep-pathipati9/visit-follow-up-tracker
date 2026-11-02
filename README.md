@@ -20,11 +20,13 @@ scheduled date yet). It flags and reports; staff make every change and every car
 
 ## Quick start
 
-Python 3.11+ and [uv](https://docs.astral.sh/uv/):
+Python 3.11+, [uv](https://docs.astral.sh/uv/), and Node.js 24 (or use Docker below):
 
 ```bash
 uv sync --locked
 cp .env.example .env
+npm ci --prefix ui
+npm run build --prefix ui
 uv run python scripts/table_generate.py
 uv run python scripts/generate_synthetic_data.py --as-of "$(date +%F)"
 uv run python scripts/import_data.py --file data/generated/clean_visits.json
@@ -59,20 +61,32 @@ Restarting the server signs everyone out.
 ### Screens
 
 - **Summary cards** open the matching filtered list when clicked.
-- **Lists** have filters, search, and paging. Rows are tinted by their most urgent state;
-  click a column header to sort; choose 25, 100, or 500 rows per page.
-- **Status** can be changed straight from a follow-up row. Choosing **Closed** asks for the
-  reason.
-- **Detail panel** (click a row): the record, its related history, and an edit form. A
-  follow-up's history lists every status, date, and staff change with who made it.
-- **As of** re-evaluates the flags for another day.
-- **Download CSV** saves every row that matches the current filters, not just the visible
-  page. Follow-up files have a Yes column per flag.
-- **Printable report** opens `/report`: flagged follow-ups grouped by flag, with patient ID,
-  action, scheduled date, and staff. The **Print** button hides the page controls.
-- **Ask** answers a question in plain English, read only, with the matching rows.
-- **Import file** (managers) saves a whole data file, or lists every problem and saves
-  nothing.
+- **Lists** have search and paging. Follow-ups also have type, status, staff, attention,
+  and sort controls. Select a patient or follow-up to open its details.
+- **Status:** use **Mark done** or **Reopen** in the worklist. The detail panel also
+  offers **Close with reason**; closing requires a reason in notes.
+- **Detail panel:** inspect notes, related visits, and the history of status, scheduled
+  date, and staff changes with who made them. Managers can create and edit records;
+  other staff can update their assigned follow-ups.
+- **As of** re-evaluates flags for another day.
+- **Export / Export CSV** downloads all matching connected records using the backend's
+  scoped export endpoints. The preview uses its small in-memory sample.
+- **Reports → Print report** opens `/report`: flagged follow-ups grouped by flag, with
+  patient ID, action, scheduled date, and staff. Print or save it as a PDF.
+- **AI Search** and the bottom-right **Agent** answer read-only questions with matching
+  rows. Each question is independent; access is enforced by the backend.
+- **Import data** (managers) validates and saves a JSON file as a whole, or lists the
+  rejected records and saves nothing.
+- **View sample dashboard** opens an explicitly labeled synthetic preview without
+  requiring a database or model key. Sample changes reset when the page reloads.
+
+### Frontend development
+
+The React, TypeScript, shadcn/ui, and Tailwind frontend lives in `ui/`.
+For hot reload, run `npm run dev --prefix ui` in a second terminal alongside FastAPI
+and open `http://localhost:5173`. Vite proxies API requests to port 8000. FastAPI
+serves `ui/dist` after `npm run build --prefix ui`; Docker builds it automatically.
+See [ui/README.md](ui/README.md) for frontend structure and setup.
 
 ## Follow-up rules
 
@@ -404,7 +418,7 @@ Details in [`scripts/README.md`](scripts/README.md). The database scripts take `
 
 ## Docker and data persistence
 
-The container runs as a non-root user on port 8000. The database lives on a named volume
+The image builds the UI with Node.js 24 and runs FastAPI as a non-root user on port 8000. The database lives on a named volume
 at `/data`, so it survives container replacement.
 
 ```bash
@@ -460,11 +474,15 @@ still there. Run `scripts/backup_db.py` before an upgrade; it uses
 ## Testing and CI
 
 ```bash
+npm ci --prefix ui
+npm test --prefix ui
+npm run build --prefix ui
 uv run pytest -q
 ```
 
 Tests use temporary synthetic databases and a fake model, so they make no external calls.
-CI (`.github/workflows/ci.yml`, check name `test`) runs them on every pull request and
+CI (`.github/workflows/ci.yml`, check name `test`) runs frontend tests, builds the UI,
+and runs the Python suite on every pull request and
 push to `main`; branch protection requires it to pass before merging.
 
 ## Repository layout
