@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { WorkspaceProvider } from "@/lib/workspace";
@@ -172,5 +172,44 @@ describe("Calendar", () => {
       start_time: null,
       notes: null,
     });
+  });
+
+  it("schedules a follow-up by dragging it from No scheduled date onto a day", async () => {
+    const day = addDays(localDate(), 3);
+    const patched: unknown[] = [];
+    const waiting = {
+      followup_id: "F070",
+      patient_name: "Harper Dummerfield",
+      action_type: "referral",
+      due_date: null,
+      status: "open",
+      flags: ["unassigned"],
+      assigned_staff_id: "S002",
+      assigned_staff_name: "Nurse Birch Sample",
+    };
+    const endpoint = vi.fn(async (url: URL, options: RequestInit) => {
+      if (options.method === "PATCH") {
+        patched.push([url.pathname, JSON.parse(options.body as string)]);
+        return reply({});
+      }
+      if (url.pathname === "/api/events") return reply([]);
+      return reply(page(url.searchParams.get("preset") === "unassigned" ? [waiting] : []));
+    });
+    mount("/#/calendar", endpoint, false); // the nurse, who is assigned F070
+    const card = await screen.findByRole("button", { name: /Harper Dummerfield/ });
+    expect(card).toHaveAttribute("draggable", "true");
+    const data = new Map<string, string>();
+    const dataTransfer = {
+      setData: (key: string, value: string) => data.set(key, value),
+      getData: (key: string) => data.get(key) ?? "",
+      effectAllowed: "",
+    };
+    fireEvent.dragStart(card, { dataTransfer });
+    const cell = document.querySelector(`[data-date="${day}"]`)!;
+    fireEvent.dragOver(cell, { dataTransfer });
+    fireEvent.drop(cell, { dataTransfer });
+    await vi.waitFor(() =>
+      expect(patched).toEqual([["/api/followups/F070", { due_date: day }]]),
+    );
   });
 });

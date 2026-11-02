@@ -208,6 +208,22 @@ export async function sampleRequest<T>(
         open_episodes: names.length,
         visits_last_30_days: rows.filter((r) => r.visit_date >= relative(-30))
           .length,
+        ...(() => {
+          const resolved = rows.filter(
+            (r) =>
+              r.status !== "open" &&
+              (r.completed_at ?? "").slice(0, 10) >= relative(-30),
+          );
+          const done = resolved.filter((r) => r.status === "done" && r.due_date);
+          return {
+            done_last_30_days: resolved.filter((r) => r.status === "done").length,
+            closed_last_30_days: resolved.filter((r) => r.status === "closed").length,
+            done_with_date_last_30_days: done.length,
+            done_on_time_last_30_days: done.filter(
+              (r) => r.completed_at!.slice(0, 10) <= r.due_date!,
+            ).length,
+          };
+        })(),
       };
     if (resource === "followups" && id && id !== "stats") {
       const f = rows.find((r) => r.followup_id === id);

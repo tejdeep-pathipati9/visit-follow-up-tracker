@@ -51,6 +51,11 @@ export interface Summary {
   open_episodes: number;
   visits_last_30_days: number;
   staff_with_overdue?: number;
+  // Resolved in the 30 days up to the as-of date, counted on the server.
+  done_last_30_days: number;
+  closed_last_30_days: number;
+  done_with_date_last_30_days: number;
+  done_on_time_last_30_days: number;
 }
 // An important date on the calendar; no staff member means the whole clinic.
 export interface CalendarEvent {

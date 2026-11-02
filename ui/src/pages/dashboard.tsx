@@ -123,26 +123,24 @@ export function DashboardPage() {
     preset: "completed_today",
     limit: 1,
   });
-  const finished = useApi<Page<Followup>>("followups", {
-    status: ["done", "closed"],
-    completed_from: addDays(asOf, -29),
-    completed_to: asOf,
-    limit: 1000,
-  });
   const owners = useApi<Stats>("followups/stats", {
     group_by: "assigned_staff",
   });
   const types = useApi<Stats>("followups/stats", { group_by: "action_type" });
+  // "Coming up" uses one range for follow-ups and events: today and the next six days.
+  const weekEnd = addDays(asOf, 6);
   const dueThisWeek = useApi<Page<Followup>>("followups", {
-    preset: "due_this_week",
+    status: "open",
+    due_from: asOf,
+    due_to: weekEnd,
     limit: 8,
     sort: "due_date",
   });
   const events = useApi<CalendarEvent[]>("events", {
     date_from: asOf,
-    date_to: addDays(asOf, 6),
+    date_to: weekEnd,
   });
-  const queries = [summary, overdueWeek, doneToday, finished, owners, types, dueThisWeek, events];
+  const queries = [summary, overdueWeek, doneToday, owners, types, dueThisWeek, events];
   const failure = queries.find((q) => q.error)?.error;
   if (failure)
     return (
@@ -155,7 +153,6 @@ export function DashboardPage() {
     !summary.data ||
     !overdueWeek.data ||
     !doneToday.data ||
-    !finished.data ||
     !owners.data ||
     !types.data ||
     !dueThisWeek.data ||
@@ -183,10 +180,6 @@ export function DashboardPage() {
   const staffBehind = mostOverdue(owners.data);
   const typeBehind = mostOverdue(types.data);
   const staffWithOverdue = owners.data.groups.filter((g) => g.overdue_followups > 0).length;
-  const done = finished.data.items.filter((f) => f.status === "done");
-  const closed = finished.data.items.length - done.length;
-  const scheduled = done.filter((f) => f.due_date && f.completed_at);
-  const onTime = scheduled.filter((f) => f.completed_at!.slice(0, 10) <= f.due_date!).length;
   const coming = [
     ...events.data.map((e) => ({ date: e.event_date, key: e.event_id, event: e })),
     ...dueThisWeek.data.items.flatMap((f) =>
@@ -195,6 +188,7 @@ export function DashboardPage() {
   ]
     .sort((a, b) => a.date.localeCompare(b.date))
     .slice(0, 8);
+  const comingTotal = events.data.length + dueThisWeek.data.total;
 
   return (
     <>
@@ -268,7 +262,7 @@ export function DashboardPage() {
             label="Open follow-ups"
             value={counts.open_followups}
             note={`For ${d.patients_with_open_followups ?? d.patients} patients`}
-            onClick={() => navigate("followups")}
+            onClick={() => navigate("followups", { status: "open" })}
           />
         </div>
       </Card>
@@ -468,6 +462,11 @@ export function DashboardPage() {
               Nothing scheduled in the next 7 days.
             </p>
           )}
+          {comingTotal > coming.length && (
+            <p className="border-t px-6 py-3 text-xs text-muted-foreground">
+              Showing {coming.length} of {comingTotal}; the calendar has the rest.
+            </p>
+          )}
         </Card>
 
         <Card className="gap-4 dark:bg-transparent">
@@ -479,8 +478,8 @@ export function DashboardPage() {
             <div>
               <span className="text-sm text-muted-foreground">On-time completion</span>
               <span className="mt-1 block font-mono text-2xl tabular-nums">
-                {scheduled.length
-                  ? `${Math.round((onTime / scheduled.length) * 100)}%`
+                {d.done_with_date_last_30_days
+                  ? `${Math.round((d.done_on_time_last_30_days / d.done_with_date_last_30_days) * 100)}%`
                   : "—"}
               </span>
               <span className="text-xs text-muted-foreground">
@@ -491,7 +490,7 @@ export function DashboardPage() {
               <div>
                 <span className="text-sm text-muted-foreground">Done / closed</span>
                 <span className="mt-1 block font-mono text-xl tabular-nums">
-                  {done.length} / {closed}
+                  {d.done_last_30_days} / {d.closed_last_30_days}
                 </span>
               </div>
               <div>

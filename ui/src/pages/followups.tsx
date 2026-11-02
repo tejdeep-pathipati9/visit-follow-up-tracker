@@ -86,7 +86,7 @@ export function FollowupsPage() {
   const [search, setSearch] = useState(route.params.get("q") || "");
   const [q, setQ] = useState(search);
   const [type, setType] = useState("");
-  const [status, setStatus] = useState("");
+  const [status, setStatus] = useState(route.params.get("status") || "");
   const [owner, setOwner] = useState(
     route.params.get("assigned_staff_id") || "",
   );
@@ -105,16 +105,17 @@ export function FollowupsPage() {
   }, [search]);
   const routeQ = route.params.get("q") || "",
     routeOwner = route.params.get("assigned_staff_id") || "",
-    routePreset = route.params.get("preset") || "";
+    routePreset = route.params.get("preset") || "",
+    routeStatus = route.params.get("status") || "";
   useEffect(() => {
     setSearch(routeQ);
     setOwner(routeOwner);
     setPreset(routePreset);
-    setStatus("");
+    setStatus(routeStatus);
     setType("");
     setTab("all");
     setOffset(0);
-  }, [routeQ, routeOwner, routePreset]);
+  }, [routeQ, routeOwner, routePreset, routeStatus]);
   const params: Params = {
     q,
     action_type: type,

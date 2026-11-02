@@ -14,6 +14,10 @@
   see the clinic's events and their own, and change only their own. Plain-English
   questions do not read events.
 - Follow-up presets `overdue_7_plus` and `completed_today`.
+- `/api/dashboard` counts what was done and closed in the last 30 days, and how much was
+  done on time, over every record (`done_last_30_days`, `closed_last_30_days`,
+  `done_with_date_last_30_days`, `done_on_time_last_30_days`).
+- The follow-up list takes `status` from the address, like its other filters.
 
 ### Changed
 

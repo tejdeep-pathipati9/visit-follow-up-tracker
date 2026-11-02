@@ -261,6 +261,23 @@ def test_dashboard(client):
     assert dashboard["open_episodes"] == 2
     assert dashboard["visits_last_30_days"] == 2
     assert dashboard["staff_with_overdue"] == 2
+    # F005 was done on 2026-10-21, a day after its scheduled date.
+    assert (dashboard["done_last_30_days"], dashboard["closed_last_30_days"]) == (1, 0)
+    assert (dashboard["done_with_date_last_30_days"], dashboard["done_on_time_last_30_days"]) == (1, 0)
+
+
+def test_dashboard_counts_every_resolved_follow_up(client, database):
+    # More than a page of records: the counts come from SQL, not from a list of 1,000.
+    with closing(sqlite3.connect(database)) as connection, connection:
+        connection.executemany(
+            "INSERT INTO followups (followup_id, visit_id, action_type, due_date, assigned_staff_id, status, completed_at, notes)"
+            " VALUES (?, 'V001', 'lab', '2026-10-25', 'S001', ?, ?, ?)",
+            [(f"FX{n:04d}", "done", "2026-10-24T10:00:00Z", None) for n in range(1500)]
+            + [(f"FY{n:04d}", "closed", "2026-10-25T10:00:00Z", "Patient unreachable") for n in range(200)],
+        )
+    dashboard = get(client, "/api/dashboard")
+    assert (dashboard["done_last_30_days"], dashboard["closed_last_30_days"]) == (1501, 200)
+    assert (dashboard["done_with_date_last_30_days"], dashboard["done_on_time_last_30_days"]) == (1501, 1500)
 
 
 def test_options_for_dropdowns_and_sliders(client):

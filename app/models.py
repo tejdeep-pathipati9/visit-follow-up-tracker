@@ -431,6 +431,11 @@ class Dashboard(BaseModel):
     open_episodes: int
     visits_last_30_days: int
     staff_with_overdue: int
+    # Resolved in the 30 days up to as_of_date, counted in SQL over every record.
+    done_last_30_days: int
+    closed_last_30_days: int
+    done_with_date_last_30_days: int  # done follow-ups that had a scheduled date
+    done_on_time_last_30_days: int  # of those, done on or before the scheduled date
 
 
 class StaffOption(BaseModel):

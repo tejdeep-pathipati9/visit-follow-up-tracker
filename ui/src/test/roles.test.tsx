@@ -6,13 +6,21 @@ import type { ReactNode } from "react";
 import { WorkspaceProvider } from "@/lib/workspace";
 import { SessionProvider } from "@/lib/session";
 import { sampleRequest } from "@/lib/sample-data";
+import { localDate, addDays } from "@/lib/types";
 import { DashboardPage } from "@/pages/dashboard";
+import { FollowupsPage } from "@/pages/followups";
 import { RecordsPage } from "@/pages/records";
 
 const reply = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status });
-// A connected workspace answered from the sample data, signed in as a manager or a nurse.
-function mount(children: ReactNode, path: string, manager: boolean) {
+// A connected workspace answered from the sample data, signed in as a manager or a nurse;
+// `change` can adjust any answer.
+function mount(
+  children: ReactNode,
+  path: string,
+  manager: boolean,
+  change: (path: string, body: unknown) => unknown = (_, body) => body,
+) {
   history.replaceState(null, "", path);
   const requests: URL[] = [];
   vi.stubGlobal(
@@ -32,7 +40,8 @@ function mount(children: ReactNode, path: string, manager: boolean) {
         const values = url.searchParams.getAll(key);
         params[key] = values.length > 1 ? values : values[0];
       }
-      return reply(await sampleRequest(url.pathname.replace("/api/", ""), { params }));
+      const path = url.pathname.replace("/api/", "");
+      return reply(change(path, await sampleRequest(path, { params })));
     }),
   );
   const cache = new QueryClient({
@@ -83,5 +92,61 @@ describe("Manager and staff views", () => {
     expect(patients.at(-1)?.searchParams.get("flag")).toBe("overdue");
     await user.click(chip);
     expect(location.hash).toBe("#/patients");
+  });
+
+  it("takes the last 30 days from the server's counts, not from one page of records", async () => {
+    mount(<DashboardPage />, "/#/overview", true, (path, body) =>
+      path === "dashboard"
+        ? {
+            ...(body as object),
+            done_last_30_days: 1500,
+            closed_last_30_days: 0,
+            done_with_date_last_30_days: 1500,
+            done_on_time_last_30_days: 1200,
+          }
+        : body,
+    );
+    expect(await screen.findByText("1500 / 0")).toBeInTheDocument();
+    expect(screen.getByText("80%")).toBeInTheDocument();
+  });
+
+  it("opens only open follow-ups from the Open follow-ups count", async () => {
+    const { user } = mount(<DashboardPage />, "/#/overview", true);
+    await user.click(await screen.findByRole("button", { name: /Open follow-ups/ }));
+    expect(location.hash).toBe("#/followups?status=open");
+  });
+
+  it("filters the worklist by a status in the address", async () => {
+    const { requests } = mount(<FollowupsPage />, "/#/followups?status=open", true);
+    await screen.findByRole("heading", { name: "Follow-ups" });
+    await vi.waitFor(() =>
+      expect(
+        requests.some(
+          (url) =>
+            url.pathname === "/api/followups" &&
+            url.searchParams.get("status") === "open" &&
+            url.searchParams.has("offset"),
+        ),
+      ).toBe(true),
+    );
+  });
+
+  it("asks for follow-ups and events coming up over the same seven days", async () => {
+    const { requests } = mount(<DashboardPage />, "/#/overview", true);
+    await screen.findByText("Coming up this week");
+    const followups = requests.find(
+      (url) => url.pathname === "/api/followups" && url.searchParams.has("due_to"),
+    )!;
+    const events = requests.find((url) => url.pathname === "/api/events")!;
+    const today = localDate();
+    expect([followups.searchParams.get("due_from"), followups.searchParams.get("due_to")]).toEqual([
+      today,
+      addDays(today, 6),
+    ]);
+    expect([events.searchParams.get("date_from"), events.searchParams.get("date_to")]).toEqual([
+      today,
+      addDays(today, 6),
+    ]);
+    expect(followups.searchParams.get("status")).toBe("open");
   });
 });
