@@ -29,13 +29,12 @@ describe("Application shell", () => {
     );
     const user = userEvent.setup();
     expect(
-      await screen.findByRole("heading", { name: "Clinic overview" }),
+      await screen.findByRole("heading", { name: "Follow-up operations" }),
     ).toBeInTheDocument();
-    expect(await screen.findByText("Priority follow-ups")).toBeInTheDocument();
-    expect(screen.getByText("Staff workload")).toBeInTheDocument();
-    expect(
-      screen.getByText("Scheduled by due date · through the next 7 days"),
-    ).toBeInTheDocument();
+    expect(await screen.findByText("Action center")).toBeInTheDocument();
+    expect(screen.getByText("Team and workload")).toBeInTheDocument();
+    expect(screen.getByText("Coming up this week")).toBeInTheDocument();
+    expect(screen.getByText("Team huddle")).toBeInTheDocument();
     await user.click(screen.getByRole("link", { name: "Follow-ups" }));
     expect(
       await screen.findByRole("heading", { name: "Follow-ups" }),

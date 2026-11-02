@@ -46,9 +46,23 @@ export interface Summary {
   followups: Counts;
   completed_last_7_days: number;
   patients: number;
+  patients_with_open_followups?: number;
   patients_with_overdue: number;
   open_episodes: number;
   visits_last_30_days: number;
+  staff_with_overdue?: number;
+}
+// An important date on the calendar; no staff member means the whole clinic.
+export interface CalendarEvent {
+  event_id: string;
+  title: string;
+  event_date: string;
+  start_time: string | null;
+  staff_id: string | null;
+  staff_name: string | null;
+  notes: string | null;
+  created_by: string | null;
+  created_by_name: string | null;
 }
 export interface Page<T> {
   items: T[];
@@ -95,9 +109,14 @@ export interface RequestOptions {
 }
 export const titleCase = (s: string) =>
   s.replaceAll("_", " ").replace(/^./, (c) => c.toUpperCase());
-export const localDate = () => {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+export const isoDate = (d: Date) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+export const localDate = () => isoDate(new Date());
+// Calendar arithmetic on YYYY-MM-DD strings, at local noon so DST never shifts the day.
+export const addDays = (s: string, days: number) => {
+  const d = new Date(`${s}T12:00:00`);
+  d.setDate(d.getDate() + days);
+  return isoDate(d);
 };
 export const formatDate = (s: string | null) =>
   s
