@@ -1,13 +1,15 @@
 """Back up the database while the app runs, and prove the copy can be restored.
 
 Uses sqlite3.Connection.backup (a file copy of a live database can be torn), checks the
-copy with PRAGMA integrity_check, then restores it into a scratch file and compares row
-counts with the original. The live database is only read.
+copy with PRAGMA integrity_check, then restores it into a scratch file and checks the
+restore holds exactly what the backup holds. The live database is only read, and records
+saved after the snapshot do not affect the check.
 """
 
 import argparse
 from contextlib import closing
 from datetime import datetime, timezone
+import hashlib
 import os
 from pathlib import Path
 import sqlite3
@@ -21,6 +23,20 @@ TABLES = ("patients", "staff", "episodes", "visits", "followups", "followup_hist
 def row_counts(path: Path) -> dict[str, int]:
     with closing(sqlite3.connect(f"file:{path}?mode=ro", uri=True)) as connection:
         return {table: connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] for table in TABLES}
+
+
+def contents(path: Path) -> dict[str, tuple[int, str]]:
+    """Each table's row count and a digest of its rows, to compare two copies."""
+    result = {}
+    with closing(sqlite3.connect(f"file:{path}?mode=ro", uri=True)) as connection:
+        for table in TABLES:
+            digest = hashlib.sha256()
+            count = 0
+            for row in connection.execute(f"SELECT * FROM {table} ORDER BY rowid"):
+                digest.update(repr(row).encode("utf-8"))
+                count += 1
+            result[table] = (count, digest.hexdigest())
+    return result
 
 
 def copy_database(source: Path, target: Path) -> None:
@@ -46,8 +62,9 @@ def backup(source: Path, backup_dir: Path) -> Path:
     with tempfile.TemporaryDirectory() as scratch:
         restored = Path(scratch) / "restored.db"
         copy_database(target, restored)
-        if row_counts(restored) != row_counts(source):
-            raise ValueError("restored row counts differ from the original")
+        # Compare with the backup, not the live database, which may have changed since.
+        if contents(restored) != contents(target):
+            raise ValueError("the test restore differs from the backup")
     return target
 
 

@@ -8,6 +8,9 @@
   SQL defined a CTE named after a table, such as
   `WITH followups AS (SELECT * FROM main.followups)`. Their questions now run on a copy
   that holds only their rows.
+- `backup_db.py` compared the test restore with the live database, so a record saved
+  during the backup made a good backup fail. It now checks the restore against the backup:
+  each table's row count and contents.
 - Lists, counts, and the report no longer fail with `query_limit_exceeded` on ten years of
   records (120,000 visits): the app's own searches have only a 30-second time limit. The
   step and 2-second limits still apply to model-written SQL.
