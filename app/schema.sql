@@ -1,4 +1,5 @@
--- Core schema from README section 4; not applied automatically.
+-- Core schema. scripts/table_generate.py creates it; the app also runs it when it starts
+-- with an existing database, so a new release adds its tables without touching data.
 -- Every change to a follow-up's status, scheduled date, or staff member is kept in
 -- followup_history, written in the same transaction as the change.
 
@@ -72,6 +73,20 @@ CREATE TABLE IF NOT EXISTS followup_history (
     CHECK (field <> 'status' OR (old_value IN ('open', 'done', 'closed') AND new_value IN ('open', 'done', 'closed')))
 );
 
+-- Important dates on the calendar (release 1.1.0), such as a team meeting or a day the
+-- clinic is closed. They are not patient records; follow-ups keep their own scheduled date.
+CREATE TABLE IF NOT EXISTS schedule_events (
+    event_id   TEXT PRIMARY KEY,
+    title      TEXT NOT NULL CHECK (length(trim(title)) > 0),
+    event_date TEXT NOT NULL,
+    start_time TEXT,  -- HH:MM; NULL for an all-day event
+    staff_id   TEXT,  -- who it is for; NULL for the whole clinic
+    notes      TEXT,
+    created_by TEXT,  -- who added it; NULL for scripts
+    FOREIGN KEY (staff_id) REFERENCES staff(staff_id),
+    FOREIGN KEY (created_by) REFERENCES staff(staff_id)
+);
+
 CREATE INDEX IF NOT EXISTS idx_visits_episode_date
     ON visits (episode_id, visit_date);
 CREATE INDEX IF NOT EXISTS idx_visits_patient_date
@@ -82,3 +97,5 @@ CREATE INDEX IF NOT EXISTS idx_followups_staff_status
     ON followups (assigned_staff_id, status);
 CREATE INDEX IF NOT EXISTS idx_followup_history_followup
     ON followup_history (followup_id, changed_at);
+CREATE INDEX IF NOT EXISTS idx_schedule_events_date
+    ON schedule_events (event_date);

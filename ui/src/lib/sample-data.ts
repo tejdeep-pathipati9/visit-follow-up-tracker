@@ -3,6 +3,7 @@ import { ApiError } from "./api";
 import { localDate } from "./types";
 import type {
   Attention,
+  CalendarEvent,
   Followup,
   RequestOptions,
   Counts,
@@ -77,6 +78,32 @@ const records: Followup[] = names.map((name, i) => {
     days_until_due: 0,
   };
 });
+// Important dates for the sample calendar, relative to today.
+const event = (
+  n: number,
+  title: string,
+  days: number,
+  start_time: string | null,
+  owner: Staff | null,
+  notes: string | null = null,
+): CalendarEvent => ({
+  event_id: "C" + String(n).padStart(3, "0"),
+  title,
+  event_date: relative(days),
+  start_time,
+  staff_id: owner?.staff_id ?? null,
+  staff_name: owner?.name ?? null,
+  notes,
+  created_by: staff[0].staff_id,
+  created_by_name: staff[0].name,
+});
+const events: CalendarEvent[] = [
+  event(1, "Team huddle", 0, "08:30", null, "Review overdue follow-ups."),
+  event(2, "Lab courier pickup", 2, "14:00", staff[2]),
+  event(3, "Referral desk training", 6, "12:00", null),
+  event(4, "Clinic closed", 9, null, null, "Staff training day."),
+  event(5, "Dr. Chen on leave", 13, null, staff[0]),
+];
 export function sampleCounts(rows: Followup[]): Counts {
   const open = rows.filter((r) => r.status === "open");
   return {
@@ -130,6 +157,7 @@ export async function sampleRequest<T>(
     return { ...r, flags, days_until_due: days };
   });
   const [resource, id] = path.split("/");
+  const one = (value: unknown) => [value].flat().map(String);
   const result = (() => {
     if (method === "PATCH" && resource === "followups" && id) {
       const item = records.find((r) => r.followup_id === id);
@@ -156,6 +184,12 @@ export async function sampleRequest<T>(
         503,
         "preview_only",
       );
+    if (resource === "events")
+      return events.filter(
+        (e) =>
+          e.event_date >= String(params.date_from) &&
+          e.event_date <= String(params.date_to),
+      );
     if (resource === "options")
       return {
         staff,
@@ -174,6 +208,22 @@ export async function sampleRequest<T>(
         open_episodes: names.length,
         visits_last_30_days: rows.filter((r) => r.visit_date >= relative(-30))
           .length,
+        ...(() => {
+          const resolved = rows.filter(
+            (r) =>
+              r.status !== "open" &&
+              (r.completed_at ?? "").slice(0, 10) >= relative(-30),
+          );
+          const done = resolved.filter((r) => r.status === "done" && r.due_date);
+          return {
+            done_last_30_days: resolved.filter((r) => r.status === "done").length,
+            closed_last_30_days: resolved.filter((r) => r.status === "closed").length,
+            done_with_date_last_30_days: done.length,
+            done_on_time_last_30_days: done.filter(
+              (r) => r.completed_at!.slice(0, 10) <= r.due_date!,
+            ).length,
+          };
+        })(),
       };
     if (resource === "followups" && id && id !== "stats") {
       const f = rows.find((r) => r.followup_id === id);
@@ -205,7 +255,42 @@ export async function sampleRequest<T>(
           return false;
         if (params.action_type && r.action_type !== params.action_type)
           return false;
-        if (params.status && r.status !== params.status) return false;
+        if (params.status && !one(params.status).includes(r.status))
+          return false;
+        if (params.due_from && (!r.due_date || r.due_date < String(params.due_from)))
+          return false;
+        if (params.due_to && (!r.due_date || r.due_date > String(params.due_to)))
+          return false;
+        const completed = r.completed_at?.slice(0, 10) ?? "";
+        if (params.completed_from && completed < String(params.completed_from))
+          return false;
+        if (params.completed_to && (!completed || completed > String(params.completed_to)))
+          return false;
+        if (
+          params.preset === "overdue_7_plus" &&
+          !(r.flags.includes("overdue") && (r.days_until_due ?? 0) <= -7)
+        )
+          return false;
+        if (
+          params.preset === "due_this_week" &&
+          !(
+            r.status === "open" &&
+            r.days_until_due !== null &&
+            r.days_until_due >= 0 &&
+            r.days_until_due <= 7
+          )
+        )
+          return false;
+        if (
+          params.preset === "due_today" &&
+          !(r.status === "open" && r.days_until_due === 0)
+        )
+          return false;
+        if (
+          params.preset === "completed_today" &&
+          !(r.status === "done" && completed === asof)
+        )
+          return false;
         if (
           params.assigned_staff_id &&
           r.assigned_staff_id !== params.assigned_staff_id
@@ -336,12 +421,14 @@ export async function sampleRequest<T>(
         };
       }
       const filtered = patients.filter(
-        (p) =>
-          !params.q ||
-          Object.values(p)
-            .join(" ")
-            .toLowerCase()
-            .includes(String(params.q).toLowerCase()),
+        (p, i) =>
+          (!params.q ||
+            Object.values(p)
+              .join(" ")
+              .toLowerCase()
+              .includes(String(params.q).toLowerCase())) &&
+          (!params.flag ||
+            one(params.flag).some((f) => rows[i].flags.includes(f as Attention))),
       );
       return samplePage(filtered, asof, params);
     }

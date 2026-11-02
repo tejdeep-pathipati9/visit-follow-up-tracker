@@ -1,12 +1,13 @@
 """SQLite connections: read-only for searches and questions, writable for record changes."""
 
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 import os
 from pathlib import Path
 import sqlite3
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+SCHEMA_PATH = Path(__file__).with_name("schema.sql")
 
 
 def database_path() -> Path:
@@ -49,6 +50,21 @@ def write_database() -> Iterator[sqlite3.Connection]:
     finally:
         connection.rollback()
         connection.close()
+
+
+def add_missing_tables() -> bool:
+    """Create the tables and indexes a newer release added, keeping existing ones and their
+    data, so replacing the container is the whole upgrade. A missing database is left for
+    scripts/table_generate.py, so a wrong path never creates an empty one. Returns whether
+    the database exists."""
+    path = database_path()
+    if not path.exists():
+        return False
+    with closing(sqlite3.connect(path)) as connection:
+        connection.execute("PRAGMA foreign_keys = ON")
+        with connection:
+            connection.executescript("BEGIN;\n" + SCHEMA_PATH.read_text(encoding="utf-8") + "\nCOMMIT;")
+    return True
 
 
 def get_db() -> Iterator[sqlite3.Connection]:

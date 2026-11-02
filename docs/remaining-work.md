@@ -7,7 +7,8 @@ Last reviewed: 2026-11-01.
 
 | ID | Question | Ask | Owner |
 |---|---|---|---|
-| O9 | The brief asks 1.1.0 for "one new rule", and its tests for "a follow-up that breaks two rules"; our flags never combine (A1) and 1.1.0 adds passwords (A18). Is that acceptable? | Instructor | Jihyung |
+| O9 | The brief asks 1.1.0 for "one new rule", and its tests for "a follow-up that breaks two rules"; our flags never combine (A1) and 1.1.0 is the calendar (A26). Is that acceptable? | Instructor | Jihyung |
+| O11 | Should calendar events follow the 10-year clean-up, and may other staff add events (A27)? | Team | Jihyung |
 | O10 | Is A10 right: staff change only their own follow-ups, and only managers create, edit, or import? | Team | Jihyung |
 
 ## Whole team
@@ -33,9 +34,11 @@ Last reviewed: 2026-11-01.
 
 ## Tejdeep: Docker, release, CI, README
 
-- [ ] Release 1.0.0: image tag, Git tag, CHANGELOG entry
-- [ ] Release 1.1.0: password sign-in (A18), then image tag, Git tag, CHANGELOG entry; 1.0.0 must still read the database
+- [x] Release 1.0.0: Git tag `v1.0.0` and CHANGELOG entry (2026-11-02)
+- [ ] Release 1.0.0 and 1.1.0 image tags, built from the Git tags (README)
+- [ ] Release 1.1.0: merge the calendar (A26), tag `v1.1.0`, date the CHANGELOG entry
 - [ ] Rollback 1.1.0 → 1.0.0 on the same volume, history intact; then add it to the demo plan
+- [ ] Passwords in a later release
 - [ ] README with real command output for build, run, release, rollback, backup
 - [ ] Combine the client brief and assumptions log; check every source is listed
 - [ ] Research: privacy and care rules, record retention

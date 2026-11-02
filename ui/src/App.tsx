@@ -12,6 +12,11 @@ const FollowupsPage = lazy(() =>
     default: module.FollowupsPage,
   })),
 );
+const CalendarPage = lazy(() =>
+  import("@/pages/calendar").then((module) => ({
+    default: module.CalendarPage,
+  })),
+);
 const RecordsPage = lazy(() =>
   import("@/pages/records").then((module) => ({ default: module.RecordsPage })),
 );
@@ -40,6 +45,8 @@ export default function App() {
   const content =
     page === "followups" ? (
       <FollowupsPage />
+    ) : page === "calendar" ? (
+      <CalendarPage />
     ) : page === "patients" ||
       page === "staff" ||
       page === "visits" ||

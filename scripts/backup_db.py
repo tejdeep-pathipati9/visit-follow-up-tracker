@@ -17,19 +17,25 @@ import sys
 import tempfile
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-TABLES = ("patients", "staff", "episodes", "visits", "followups", "followup_history")
+TABLES = ("patients", "staff", "episodes", "visits", "followups", "followup_history", "schedule_events")
+
+
+def present(connection: sqlite3.Connection) -> list[str]:
+    """The tables in TABLES this database has; a 1.0.0 database has no schedule_events."""
+    names = {row[0] for row in connection.execute("SELECT name FROM sqlite_schema WHERE type = 'table'")}
+    return [table for table in TABLES if table in names]
 
 
 def row_counts(path: Path) -> dict[str, int]:
     with closing(sqlite3.connect(f"file:{path}?mode=ro", uri=True)) as connection:
-        return {table: connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] for table in TABLES}
+        return {table: connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] for table in present(connection)}
 
 
 def contents(path: Path) -> dict[str, tuple[int, str]]:
     """Each table's row count and a digest of its rows, to compare two copies."""
     result = {}
     with closing(sqlite3.connect(f"file:{path}?mode=ro", uri=True)) as connection:
-        for table in TABLES:
+        for table in present(connection):
             digest = hashlib.sha256()
             count = 0
             for row in connection.execute(f"SELECT * FROM {table} ORDER BY rowid"):

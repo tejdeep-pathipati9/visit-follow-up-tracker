@@ -7,7 +7,8 @@ generated and executed inside the server on a read-only connection.
 Every endpoint needs a signed-in staff member (app/auth.py). Searches, details,
 downloads, and the report are limited to the reader's own follow-ups unless they are
 a manager, and so are answers to questions. Only a manager creates or edits records;
-other staff change the follow-ups assigned to them.
+other staff change the follow-ups assigned to them. On the calendar, other staff see
+the clinic's events and their own, and change only their own.
 """
 
 from datetime import date
@@ -24,6 +25,7 @@ from app.auth import CurrentViewer, Manager
 from app.db import get_db, get_write_db
 from app.models import (
     AskRequest, AskResponse, Dashboard, ImportResult, EpisodeCreate, EpisodeDetail, EpisodeSearch,
+    EventCreate, EventItem, EventRange, EventUpdate,
     EpisodeSummary, EpisodeUpdate, FollowUpCreate, FollowUpDetail, FollowUpItem, FollowUpSearch,
     FollowUpStats, FollowUpStatsQuery, FollowUpUpdate, Page, PatientCreate, PatientDetail,
     PatientSearch, PatientSummary, PatientUpdate, RecordId, Report, SearchOptions, SessionInfo,
@@ -286,6 +288,32 @@ def update_followup(
     """Change status ("closed" needs a reason in notes), scheduled date, staff member, or notes.
     Staff who are not managers can change only the follow-ups assigned to them."""
     return service.update_followup(connection, followup_id, body, today(as_of_date), viewer.scope, viewer.staff_id)
+
+
+@router.get("/events", tags=["Calendar"])
+def list_events(connection: Database, viewer: CurrentViewer, query: Annotated[EventRange, Query()]) -> list[EventItem]:
+    """Calendar events between two dates (at most 366 days apart), earliest first.
+    Managers see every event; other staff see the clinic's events and their own."""
+    return service.events(connection, query, viewer.scope)
+
+
+@router.post("/events", status_code=201, tags=["Calendar"])
+def create_event(connection: WritableDatabase, viewer: CurrentViewer, body: EventCreate) -> EventItem:
+    """Add an important date. Without staff_id it is for the whole clinic when a manager
+    adds it, and for the person adding it otherwise."""
+    return service.create_event(connection, body, viewer.scope, viewer.staff_id)
+
+
+@router.patch("/events/{event_id}", tags=["Calendar"])
+def update_event(connection: WritableDatabase, viewer: CurrentViewer, event_id: RecordId, body: EventUpdate) -> EventItem:
+    """Change an event: managers any, other staff their own."""
+    return service.update_event(connection, event_id, body, viewer.scope)
+
+
+@router.delete("/events/{event_id}", status_code=204, response_class=Response, tags=["Calendar"])
+def delete_event(connection: WritableDatabase, viewer: CurrentViewer, event_id: RecordId) -> None:
+    """Delete an event: managers any, other staff their own."""
+    service.delete_event(connection, event_id, viewer.scope)
 
 
 @router.post("/import", tags=["Import"])

@@ -7,6 +7,7 @@ import {
   Plus,
   Search,
   Download,
+  X,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -84,6 +85,11 @@ const singular: Record<string, string> = {
   visits: "visit",
   episodes: "episode",
 };
+const FLAG_LABELS: Record<string, string> = {
+  overdue: "overdue",
+  due_soon: "due-soon",
+  unassigned: "unscheduled",
+};
 export function RecordsPage({
   resource,
 }: {
@@ -116,7 +122,10 @@ export function RecordsPage({
   useEffect(() => {
     setSelected(requested);
   }, [requested]);
-  const query = useApi<Page<Row>>(resource, { q, offset, limit: 15 });
+  // The dashboard links here with ?flag=overdue: patients with an overdue follow-up.
+  const flag = resource === "patients" ? route.params.get("flag") || "" : "";
+  const flagged = flag ? { flag } : {};
+  const query = useApi<Page<Row>>(resource, { q, offset, limit: 15, ...flagged });
   const detail = useApi<Row>(
     `${resource}/${encodeURIComponent(selected || "")}`,
     {},
@@ -135,6 +144,18 @@ export function RecordsPage({
           <p className="mt-0.5 text-sm text-muted-foreground">
             Connected clinic records, with the context to act.
           </p>
+          {flag && (
+            <Button
+              size="sm"
+              variant="outline"
+              className="mt-2 h-7 gap-1.5 text-xs font-normal"
+              onClick={() => navigate(resource)}
+            >
+              Only patients with {FLAG_LABELS[flag] ?? flag} follow-ups
+              <X className="size-3" />
+              <span className="sr-only">Show all patients</span>
+            </Button>
+          )}
         </div>
         <div className="flex items-center gap-2">
           <Button
@@ -142,7 +163,7 @@ export function RecordsPage({
             variant="outline"
             disabled={sample}
             onClick={() =>
-              void downloadCsv(resource, { q, as_of_date: asOf }).catch(
+              void downloadCsv(resource, { q, as_of_date: asOf, ...flagged }).catch(
                 (error: Error) => toast.error(error.message),
               )
             }

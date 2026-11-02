@@ -34,6 +34,7 @@ FLAG_RULES = build_rules(DUE_SOON_WINDOWS)
 
 FOLLOWUP_PRESETS: dict[str, tuple[str, dict[str, object]]] = {
     "overdue": ("Overdue", {"flag": ["overdue"]}),
+    "overdue_7_plus": ("Overdue 7+ days", {"days_overdue_min": 7}),
     "overdue_30_plus": ("Overdue 30+ days", {"days_overdue_min": 30}),
     "due_today": ("Due today", {"status": ["open"], "due_within_days": 0}),
     "due_soon": (
@@ -47,6 +48,7 @@ FOLLOWUP_PRESETS: dict[str, tuple[str, dict[str, object]]] = {
     "open_labs": ("Open labs", {"status": ["open"], "action_type": ["lab"]}),
     "open_referrals": ("Open referrals", {"status": ["open"], "action_type": ["referral"]}),
     "open_rechecks": ("Open rechecks", {"status": ["open"], "action_type": ["recheck"]}),
+    "completed_today": ("Completed today", {"status": ["done"], "completed_within_days": 0}),
     "completed_last_7_days": ("Completed in the last 7 days", {"status": ["done"], "completed_within_days": 7}),
     "completed_last_30_days": ("Completed in the last 30 days", {"status": ["done"], "completed_within_days": 30}),
     "open_episode_followups": ("Open follow-ups for active episodes", {"status": ["open"], "episode_status": "open"}),
@@ -585,6 +587,10 @@ def dashboard(connection: sqlite3.Connection, as_of: date, scope: str | None = N
         staff_overdue AS (
             SELECT COUNT(DISTINCT assigned_staff_id) AS count FROM followups
             WHERE status = 'open' AND due_date < :as_of AND assigned_staff_id IS NOT NULL
+        ),
+        resolved AS (
+            SELECT status, due_date, substr(completed_at, 1, 10) AS day FROM followups
+            WHERE status IN ('done', 'closed') AND substr(completed_at, 1, 10) BETWEEN :month_start AND :as_of
         )
         SELECT
             (SELECT COUNT(*) FROM followups
@@ -596,7 +602,13 @@ def dashboard(connection: sqlite3.Connection, as_of: date, scope: str | None = N
             (SELECT COUNT(*) FROM episodes WHERE closed_at IS NULL) AS open_episodes,
             (SELECT COUNT(*) FROM visits WHERE visit_date BETWEEN :month_start AND :as_of)
                 AS visits_last_30_days,
-            (SELECT count FROM staff_overdue) AS staff_with_overdue
+            (SELECT count FROM staff_overdue) AS staff_with_overdue,
+            (SELECT COUNT(*) FROM resolved WHERE status = 'done') AS done_last_30_days,
+            (SELECT COUNT(*) FROM resolved WHERE status = 'closed') AS closed_last_30_days,
+            (SELECT COUNT(*) FROM resolved WHERE status = 'done' AND due_date IS NOT NULL)
+                AS done_with_date_last_30_days,
+            (SELECT COUNT(*) FROM resolved WHERE status = 'done' AND due_date IS NOT NULL AND day <= due_date)
+                AS done_on_time_last_30_days
     """, params)[0]
     return Dashboard(as_of_date=as_of, followups=FollowUpCounts(**followups), **row)
 

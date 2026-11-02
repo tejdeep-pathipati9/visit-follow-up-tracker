@@ -8,12 +8,13 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from app import export, repository, search, writes
+from app import export, repository, schedule, search, writes
 from app.ingestion import loader
 from app.ingestion.settings import app_settings
 from app.ai import QueryAssistant
 from app.models import (
     AskRequest, AskResponse, Dashboard, EpisodeCreate, EpisodeDetail, EpisodeHistory,
+    EventCreate, EventItem, EventRange, EventUpdate,
     EpisodeSearch, EpisodeSummary, EpisodeUpdate, FollowUpCreate, FollowUpDetail, FollowUpItem,
     FollowUpSearch, FollowUpStats, FollowUpStatsQuery, FollowUpUpdate, Page, PatientCreate,
     PatientDetail, PatientSearch, PatientSummary, PatientUpdate, QueryRequest, QueryResponse,
@@ -217,6 +218,29 @@ def update_followup(
 ) -> FollowUpItem:
     writes.update_followup(connection, followup_id, body, scope, changed_by)
     return saved_followup(connection, followup_id, as_of)
+
+
+def events(connection: sqlite3.Connection, query: EventRange, scope: str | None = None) -> list[EventItem]:
+    return schedule.list_events(connection, query, scope)
+
+
+def create_event(
+    connection: sqlite3.Connection, body: EventCreate, scope: str | None = None, created_by: str | None = None,
+) -> EventItem:
+    event_id = schedule.create_event(connection, body, scope, created_by)
+    connection.commit()
+    return schedule.get_event(connection, event_id)
+
+
+def update_event(connection: sqlite3.Connection, event_id: str, body: EventUpdate, scope: str | None = None) -> EventItem:
+    schedule.update_event(connection, event_id, body, scope)
+    connection.commit()
+    return schedule.get_event(connection, event_id)
+
+
+def delete_event(connection: sqlite3.Connection, event_id: str, scope: str | None = None) -> None:
+    schedule.delete_event(connection, event_id, scope)
+    connection.commit()
 
 
 def import_records(connection: sqlite3.Connection, data: Any) -> ImportResult:

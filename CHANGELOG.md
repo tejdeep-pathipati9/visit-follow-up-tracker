@@ -1,6 +1,38 @@
 # Changelog
 
-## Unreleased
+## 1.1.0 - Unreleased
+
+### Added
+
+- **Calendar** (`#/calendar`): a month view of scheduled follow-ups and the clinic's
+  important dates. Drag a follow-up or an event to another day to move it, or drag a
+  follow-up with no date onto a day to schedule it; every follow-up move is kept in its
+  history.
+- **Important dates** (`schedule_events`): a title, date, optional time, notes, and who it
+  is for (one staff member or the whole clinic), through `GET` and `POST /api/events` and
+  `PATCH` and `DELETE /api/events/{id}`. Managers see and change every event; other staff
+  see the clinic's events and their own, and change only their own. Plain-English
+  questions do not read events.
+- Follow-up presets `overdue_7_plus` and `completed_today`.
+- `/api/dashboard` counts what was done and closed in the last 30 days, and how much was
+  done on time, over every record (`done_last_30_days`, `closed_last_30_days`,
+  `done_with_date_last_30_days`, `done_on_time_last_30_days`).
+- The follow-up list takes `status` from the address, like its other filters.
+
+### Changed
+
+- The dashboard is for follow-up and patient management: today's counts, an action
+  center, team workload with one chart (the mix of open follow-ups), what is coming this
+  week, and the last 30 days. The timeline and bar charts are gone. Staff who are not
+  managers see "My workload" instead of the team comparison, and "Patients with overdue
+  follow-ups" opens the patients list filtered to them.
+- The app adds any missing tables when it starts with an existing database, so replacing
+  the 1.0.0 container with 1.1.0 is the whole upgrade. A missing database is still left for
+  `scripts/table_generate.py`.
+- `backup_db.py` also checks `schedule_events` when the database has it.
+- Passwords move to a later release.
+
+## 1.0.0 - 2026-11-02
 
 ### Fixed
 
@@ -106,6 +138,3 @@
 - Python/FastAPI project structure with a placeholder home page and health route.
 - Synthetic sample data, domain constants in application code, and the proposed core SQL schema.
 - Local development configuration, Docker with a named data volume, and CI smoke checks.
-
-Bulk import, reports, status-change history, authentication, and
-releases 1.0.0 / 1.1.0 remain planned; no release is tagged.

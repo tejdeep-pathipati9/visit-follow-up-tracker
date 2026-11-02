@@ -6,6 +6,7 @@ import {
   ChartNoAxesCombined,
   Sparkles,
   CalendarDays,
+  CalendarRange,
   FolderHeart,
   Stethoscope,
   Settings,
@@ -18,6 +19,7 @@ export const navGroups = [
     items: [
       { title: "Dashboard", path: "#/overview", icon: <LayoutDashboard /> },
       { title: "Follow-ups", path: "#/followups", icon: <ClipboardList /> },
+      { title: "Calendar", path: "#/calendar", icon: <CalendarRange /> },
       { title: "Patients", path: "#/patients", icon: <Users /> },
       { title: "Reports", path: "#/reports", icon: <ChartNoAxesCombined /> },
       { title: "AI Search", path: "#/ask", icon: <Sparkles /> },
