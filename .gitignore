@@ -243,3 +243,16 @@ Thumbs.db
 *.swp
 *.swo
 *~
+
+# React UI dependencies and generated output
+/ui/node_modules/
+/ui/dist/
+/ui/coverage/
+!/ui/src/lib/
+!/ui/src/lib/**
+
+# Local agent and design context
+/.agents/
+/.codex/
+/.impeccable/
+/PRODUCT.md
