@@ -34,6 +34,7 @@ FLAG_RULES = build_rules(DUE_SOON_WINDOWS)
 
 FOLLOWUP_PRESETS: dict[str, tuple[str, dict[str, object]]] = {
     "overdue": ("Overdue", {"flag": ["overdue"]}),
+    "overdue_7_plus": ("Overdue 7+ days", {"days_overdue_min": 7}),
     "overdue_30_plus": ("Overdue 30+ days", {"days_overdue_min": 30}),
     "due_today": ("Due today", {"status": ["open"], "due_within_days": 0}),
     "due_soon": (
@@ -47,6 +48,7 @@ FOLLOWUP_PRESETS: dict[str, tuple[str, dict[str, object]]] = {
     "open_labs": ("Open labs", {"status": ["open"], "action_type": ["lab"]}),
     "open_referrals": ("Open referrals", {"status": ["open"], "action_type": ["referral"]}),
     "open_rechecks": ("Open rechecks", {"status": ["open"], "action_type": ["recheck"]}),
+    "completed_today": ("Completed today", {"status": ["done"], "completed_within_days": 0}),
     "completed_last_7_days": ("Completed in the last 7 days", {"status": ["done"], "completed_within_days": 7}),
     "completed_last_30_days": ("Completed in the last 30 days", {"status": ["done"], "completed_within_days": 30}),
     "open_episode_followups": ("Open follow-ups for active episodes", {"status": ["open"], "episode_status": "open"}),

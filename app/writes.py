@@ -1,8 +1,9 @@
 """Fixed, parameterized INSERT and UPDATE statements behind the record-change endpoints.
 
 Table and column names come from this module and the request models, never from
-callers; every value is a bound parameter. Records are never deleted. Callers run
-these inside db.write_database() and commit once the change succeeds.
+callers; every value is a bound parameter. Patient records are never deleted (calendar
+events can be; see app/schedule.py). Callers run these inside db.write_database() and
+commit once the change succeeds.
 """
 
 from datetime import date, datetime, timezone
@@ -22,6 +23,7 @@ RECORDS = {
     "episode": ("Episode", "episodes", "episode_id", "E"),
     "visit": ("Visit", "visits", "visit_id", "V"),
     "followup": ("Follow-up", "followups", "followup_id", "F"),
+    "event": ("Event", "schedule_events", "event_id", "C"),
 }
 
 

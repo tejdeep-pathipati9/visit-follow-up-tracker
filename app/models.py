@@ -81,9 +81,9 @@ Days = Annotated[int, Field(ge=0, le=3650)]
 Count = Annotated[int, Field(ge=0, le=100_000)]
 
 FollowUpPreset = Literal[
-    "overdue", "overdue_30_plus", "due_today", "due_soon", "due_this_week", "due_next_30_days",
-    "unassigned", "closed", "open_labs", "open_referrals", "open_rechecks",
-    "completed_last_7_days", "completed_last_30_days", "open_episode_followups",
+    "overdue", "overdue_7_plus", "overdue_30_plus", "due_today", "due_soon", "due_this_week",
+    "due_next_30_days", "unassigned", "closed", "open_labs", "open_referrals", "open_rechecks",
+    "completed_today", "completed_last_7_days", "completed_last_30_days", "open_episode_followups",
 ]
 FollowUpSort = Literal[
     "due_date", "-due_date", "visit_date", "-visit_date", "patient_name", "-patient_name",
@@ -585,6 +585,54 @@ class FollowUpUpdate(Update):
     assigned_staff_id: RecordId | None = None
     status: FollowUpStatus | None = None
     notes: Notes | None = None
+
+
+# --- Calendar events ------------------------------------------------------------
+
+EventTitle = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
+EventTime = Annotated[str, StringConstraints(pattern=r"^([01][0-9]|2[0-3]):[0-5][0-9]$")]
+
+
+class EventRange(AsOf):
+    date_from: date
+    date_to: date
+
+    @model_validator(mode="after")
+    def short_range(self):
+        if self.date_to < self.date_from:
+            raise ValueError("date_to must not be before date_from")
+        if (self.date_to - self.date_from).days > 366:
+            raise ValueError("ask for at most 366 days at a time")
+        return self
+
+
+class EventCreate(Change):
+    title: EventTitle
+    event_date: date
+    start_time: EventTime | None = None  # omit for an all-day event
+    staff_id: RecordId | None = None  # who it is for; omit for the whole clinic (managers) or yourself
+    notes: Notes | None = None
+
+
+class EventUpdate(Update):
+    not_null = frozenset({"title", "event_date"})
+    title: EventTitle | None = None
+    event_date: date | None = None
+    start_time: EventTime | None = None
+    staff_id: RecordId | None = None  # null: for the whole clinic (managers only)
+    notes: Notes | None = None
+
+
+class EventItem(BaseModel):
+    event_id: str
+    title: str
+    event_date: date
+    start_time: str | None
+    staff_id: str | None
+    staff_name: str | None
+    notes: str | None
+    created_by: str | None
+    created_by_name: str | None
 
 
 # --- Natural-language questions -----------------------------------------------

@@ -128,6 +128,10 @@ def test_every_preset_runs(client, preset):
     ({"preset": "open_labs"}, ["F001", "F002", "F007"]),
     ({"preset": "completed_last_7_days"}, ["F005"]),
     ({"preset": "overdue_30_plus"}, []),
+    ({"preset": "overdue_7_plus"}, []),
+    ({"preset": "overdue_7_plus", "as_of_date": "2026-11-01"}, ["F001", "F006", "F007"]),
+    ({"preset": "completed_today", "as_of_date": "2026-10-21"}, ["F005"]),
+    ({"preset": "completed_today"}, []),
 ])
 def test_presets_and_filters_combine(client, params, expected):
     assert followup_ids(client, **params) == expected

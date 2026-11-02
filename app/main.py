@@ -1,5 +1,6 @@
 """Application entry point, read-only search API, and natural-language questions."""
 
+from contextlib import asynccontextmanager
 from datetime import date
 import logging
 from pathlib import Path
@@ -13,10 +14,20 @@ from fastapi.templating import Jinja2Templates
 
 from app import auth, service
 from app.api import router, session_router
-from app.db import read_database
+from app.db import add_missing_tables, read_database
 from app.repository import QueryError
 
-app = FastAPI(title="Visit Follow-Up Tracker", version="0.1.0")
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    try:
+        add_missing_tables()
+    except sqlite3.Error:
+        logging.getLogger(__name__).exception("Could not add new tables to the database")
+    yield
+
+
+app = FastAPI(title="Visit Follow-Up Tracker", version="1.1.0", lifespan=lifespan)
 app.include_router(session_router)
 app.include_router(router)
 app.mount("/static", StaticFiles(directory=Path(__file__).parent / "static"), name="static")

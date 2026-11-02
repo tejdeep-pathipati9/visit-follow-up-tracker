@@ -25,7 +25,7 @@ class TableGenerateTests(unittest.TestCase):
                 )
             }
             self.assertEqual(
-                tables, {"patients", "staff", "episodes", "visits", "followups", "followup_history"}
+                tables, {"patients", "staff", "episodes", "visits", "followups", "followup_history", "schedule_events"}
             )
             indexes = {
                 row[0] for row in connection.execute(
@@ -35,7 +35,7 @@ class TableGenerateTests(unittest.TestCase):
             self.assertTrue({
                 "idx_visits_episode_date", "idx_visits_patient_date",
                 "idx_followups_status_due", "idx_followups_staff_status",
-                "idx_followup_history_followup",
+                "idx_followup_history_followup", "idx_schedule_events_date",
             }.issubset(indexes))
             connection.execute(
                 "INSERT INTO patients (patient_id, name) VALUES (?, ?)",
