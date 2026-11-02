@@ -54,13 +54,19 @@ Staff sign in with their email. There is **no password yet**; it comes in a late
 | Report and CSV | Everything | Their own follow-ups |
 | Changes | Every record type | Status, scheduled date, staff, and notes of their own follow-ups |
 | Plain-English questions | About everything | About their own follow-ups only |
+| Calendar events | Every event | The clinic's events and their own; they change only their own |
 | Import a file | Yes | No |
 
 Restarting the server signs everyone out.
 
 ### Screens
 
-- **Summary cards** open the matching filtered list when clicked.
+- **Dashboard:** today's counts, an action center, team workload, what is coming this
+  week, and the last 30 days. Every count opens the matching list.
+- **Calendar:** scheduled follow-ups and important dates by month. Drag a follow-up or an
+  event to another day to move it, or a follow-up from **No scheduled date** onto a day to
+  schedule it. Managers add events for the whole clinic or one person; other staff add
+  their own.
 - **Lists** have search and paging. Follow-ups also have type, status, staff, attention,
   and sort controls. Select a patient or follow-up to open its details.
 - **Status:** use **Mark done** or **Reopen** in the worklist. The detail panel also
@@ -223,6 +229,8 @@ Other routes:
 | `GET` | `/api/followups/stats` | Counts for filtered follow-ups, optionally grouped |
 | `GET` | `/api/options` | Values for dropdowns, presets, and sorts |
 | `GET` | `/api/schema` | The database schema as text |
+| `GET` | `/api/events?date_from=&date_to=` | Calendar events in a range of up to 366 days |
+| `POST` / `PATCH` / `DELETE` | `/api/events`, `/api/events/{id}` | Add, change, or delete an event |
 | `POST` | `/api/import` | Import a file's JSON (managers; 422 with every rejection, nothing saved) |
 | `POST` | `/api/ask` | A read-only question (needs `OPENAI_API_KEY`) |
 
@@ -450,15 +458,19 @@ Mount the directory, not the database file, so SQLite's side files persist too.
 
 ## Releases, upgrade, rollback, and backup
 
-| Version | Contents |
-|---|---|
-| 1.0.0 | Everything above, for internal use with email-only sign-in |
-| 1.1.0 | Adds passwords to sign-in |
+| Version | Git tag | Contents |
+|---|---|---|
+| 1.0.0 | `v1.0.0` | The tracker for internal use, with email-only sign-in |
+| 1.1.0 | `v1.1.0` | The calendar with important dates, and a simpler dashboard |
 
-No release is tagged yet; see [CHANGELOG.md](CHANGELOG.md). Each release gets a Git tag, an
-image tag, and a changelog entry, and 1.1.0 must keep the 1.0.0 database readable.
+See [CHANGELOG.md](CHANGELOG.md). Each release gets a Git tag, an image tag, and a changelog
+entry. Passwords come in a later release.
 
 ```bash
+# Image tags: build each release from its Git tag.
+git switch --detach v1.0.0 && docker build -t visit-followup-tracker:1.0.0 . && git switch -
+git switch --detach v1.1.0 && docker build -t visit-followup-tracker:1.1.0 . && git switch -
+
 # Upgrade: replace the container, reuse the volume.
 docker stop followup-app && docker rm followup-app
 docker run -d --name followup-app -p 8000:8000 -v followup_data:/data \
@@ -467,8 +479,10 @@ docker run -d --name followup-app -p 8000:8000 -v followup_data:/data \
 # Roll back the same way with visit-followup-tracker:1.0.0.
 ```
 
-After a rollback, check that a follow-up and its history created before the upgrade are
-still there. Run `scripts/backup_db.py` before an upgrade; it uses
+1.1.0 adds the `schedule_events` table when it starts and changes nothing else, so 1.0.0
+still reads the database: after a rollback every follow-up and its history are there, and
+the calendar events come back with the next upgrade. After a rollback, check that a
+follow-up and its history created before the upgrade are still there. Run `scripts/backup_db.py` before an upgrade; it uses
 `sqlite3.Connection.backup()` (a file copy of a live database can be torn).
 
 ## Testing and CI
@@ -510,8 +524,9 @@ presentation/          team presentation page
 
 ## Security and limitations
 
-- Sign-in has no password yet, because 1.0.0 is for internal use: anyone who knows a staff
-  email can act as that person. Passwords come in 1.1.0; real use also needs a privacy review.
+- Sign-in has no password yet, because the tracker is for internal use: anyone who knows a
+  staff email can act as that person. Passwords come in a later release; real use also
+  needs a privacy review.
 - Sessions live in server memory, so the app must run as a single process.
 - The clinic keeps records for 10 years (its own policy). Run `delete_old_records.py`
   regularly; nothing else deletes records.
