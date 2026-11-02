@@ -104,25 +104,39 @@
   .notes li span { font-size: 14.5px; color: var(--muted); line-height: 1.4; }
   .footnote { margin-top: 18px; font-size: 13px; color: var(--muted); line-height: 1.5; }
 
-  /* Running it: three versions in turn over one store of records */
+  /* Safe updates: test and update, with a clearly optional way back. */
+  .update-slide h1 { margin-bottom: 10px; }
+  .update-subtitle { margin: 0; font-size: 18px; color: var(--muted); line-height: 1.4; }
   .ops { flex: 1; display: grid; grid-template-columns: 1fr 330px; gap: 40px; align-items: center; min-height: 0; }
   .ops-visual { background: var(--accent-soft); border-radius: 8px; padding: 36px 32px 32px; }
-  .vers { display: flex; align-items: center; justify-content: space-between; }
-  .vers .arrow { font-size: 26px; }
-  .ver { position: relative; width: 170px; background: #fff; border: 1px solid #c9dcec; border-radius: 8px; padding: 14px 12px; display: flex; flex-direction: column; align-items: center; gap: 4px; text-align: center; }
-  .ver.new { border: 2px solid var(--brand); }
-  .ver b { font-size: 20px; }
-  .ver span { font-size: 13px; color: var(--muted); }
-  .ver::after { content: ""; position: absolute; left: 50%; top: 100%; height: 34px; border-left: 2px dashed #8fb3d3; }
+  .update-flow { display: flex; align-items: center; justify-content: space-between; }
+  .update-stage { width: 170px; min-height: 198px; background: #fff; border: 1px solid #c9dcec; border-radius: 8px; padding: 18px 12px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; text-align: center; }
+  .update-stage.current { border: 2px solid var(--brand); }
+  .update-stage.optional { border: 2px dashed #8fb3d3; }
+  .update-stage b { font-size: 20px; line-height: 1.2; }
+  .update-stage span { font-size: 14px; color: var(--muted); line-height: 1.4; }
+  .update-arrow { width: 32px; height: 24px; flex: none; fill: none; stroke: var(--accent); stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+  .update-condition { width: 72px; flex: none; text-align: center; }
+  .update-condition span { display: block; margin-bottom: 6px; font-size: 12px; font-weight: 600; line-height: 1.35; color: var(--accent); }
+  .update-condition .update-arrow { width: 72px; }
   .volume { margin-top: 34px; display: grid; grid-template-columns: 30px 1fr; gap: 14px; align-items: center; background: var(--ink); color: #fff; border-radius: 8px; padding: 16px 20px; }
   .volume .ic { color: #7cc0f0; }
-  .volume b { display: block; font-size: 17px; margin-bottom: 2px; }
-  .volume span { font-size: 14px; color: #b9cde0; }
+  .volume b { display: block; font-size: 17px; line-height: 1.35; margin-bottom: 5px; }
+  .volume span { font-size: 14px; color: #b9cde0; line-height: 1.4; }
   .ops-side { display: flex; flex-direction: column; }
   .step { display: grid; grid-template-columns: 22px 1fr; gap: 12px; align-items: start; padding: 16px 0; border-top: 1px solid var(--line); }
   .step:last-child { border-bottom: 1px solid var(--line); }
   .step b { display: block; font-size: 16px; margin-bottom: 3px; }
   .step span { font-size: 14px; color: var(--muted); line-height: 1.4; }
+
+  /* Future scope: three potential improvements, clearly beyond the current MVP. */
+  .future-slide h1 { margin-bottom: 10px; }
+  .future-subtitle { margin: 0; font-size: 18px; color: var(--muted); line-height: 1.4; }
+  .future-list { list-style: none; margin: 0; padding: 0; }
+  .future-list li { display: grid; grid-template-columns: 40px 1fr; gap: 24px; align-items: start; border-top: 1px solid var(--line); padding: 26px 0; }
+  .future-list .ic { margin-top: 2px; }
+  .future-list h2 { margin: 0 0 9px; font-size: 23px; line-height: 1.25; }
+  .future-list p { margin: 0; max-width: 960px; font-size: 18px; color: var(--muted); line-height: 1.5; }
 
   .nav { position: fixed; top: 10px; right: 14px; display: flex; gap: 8px; align-items: center; color: #cfd6df; font-size: 13px; z-index: 10; opacity: .2; transition: opacity .2s; }
   .nav:hover { opacity: 1; }
@@ -313,7 +327,7 @@
       </div>
       <div class="notes">
         <ol>
-          <li><span class="n">1</span><div><b>Signed in by email</b><span>1.0.0 is for internal use; passwords come in 1.1.0.</span></div></li>
+          <li><span class="n">1</span><div><b>Signed in by email</b><span>Staff sign in with their clinic email.</span></div></li>
           <li><span class="n">2</span><div><b>Her numbers only</b><span>Counts cover only the follow-ups assigned to her.</span></div></li>
           <li><span class="n">3</span><div><b>Her rows only</b><span>Lists, CSV files, the report, and her questions use the same rule. Importing and adding records are for managers.</span></div></li>
         </ol>
@@ -364,24 +378,24 @@
     <div class="footer"><div class="flogo"></div><span>Visit Follow-Up Tracker</span><span class="pg"></span></div>
   </section>
 
-  <section class="slide">
-    <div class="eyebrow">Running it</div>
-    <h1>Updates change the program, <em>never the records</em></h1>
+  <section class="slide update-slide">
+    <h1>How we manage <em>updates safely</em></h1>
+    <p class="update-subtitle">Improving the application without disrupting clinic operations</p>
     <div class="ops">
       <div class="ops-visual">
-        <div class="vers">
-          <div class="ver"><svg class="ic"><use href="#i-box"/></svg><b>1.0.0</b><span>Today</span></div>
-          <span class="arrow">→</span>
-          <div class="ver new"><svg class="ic"><use href="#i-box"/></svg><b>1.1.0</b><span>Adds passwords</span></div>
-          <span class="arrow">→</span>
-          <div class="ver"><svg class="ic"><use href="#i-box"/></svg><b>1.0.0</b><span>Roll back if needed</span></div>
+        <div class="update-flow" role="group" aria-label="Test, then update. Roll back only if a problem occurs.">
+          <div class="update-stage"><svg class="ic" aria-hidden="true"><use href="#i-shield"/></svg><b>Test</b><span>Verify changes before release</span></div>
+          <svg class="update-arrow" viewBox="0 0 32 24" aria-hidden="true"><path d="M2 12h27m-7-7 7 7-7 7"/></svg>
+          <div class="update-stage current"><svg class="ic" aria-hidden="true"><use href="#i-box"/></svg><b>Update</b><span>Introduce the new version</span></div>
+          <div class="update-condition"><span>Only if an issue appears</span><svg class="update-arrow" viewBox="0 0 72 24" aria-hidden="true"><path d="M2 12h66" stroke-dasharray="4 4"/><path d="m61 5 7 7-7 7"/></svg></div>
+          <div class="update-stage optional"><svg class="ic" aria-hidden="true"><use href="#i-history"/></svg><b>Roll back if needed</b><span>Return to the last working version if a problem occurs</span></div>
         </div>
-        <div class="volume"><svg class="ic"><use href="#i-db"/></svg><div><b>The clinic's records and their history</b><span>Stored apart from the program, so every version finds them where they were</span></div></div>
+        <div class="volume"><svg class="ic" aria-hidden="true"><use href="#i-db"/></svg><div><b>Patient records are stored separately from application updates</b><span>Updating the software should not erase clinic records.</span></div></div>
       </div>
       <div class="ops-side">
-        <div class="step"><svg class="ic sm"><use href="#i-box"/></svg><div><b>Installs the same way anywhere</b><span>One package sets it up identically on any clinic computer.</span></div></div>
-        <div class="step"><svg class="ic sm"><use href="#i-shield"/></svg><div><b>Backups that are checked</b><span>Every backup is checked and test-restored before anyone relies on it.</span></div></div>
-        <div class="step"><svg class="ic sm"><use href="#i-calendar"/></svg><div><b>Kept 10 years, then deleted</b><span>As the clinic asked; a preview shows what would be deleted first.</span></div></div>
+        <div class="step"><svg class="ic sm" aria-hidden="true"><use href="#i-shield"/></svg><div><b>Tested first</b><span>Changes are checked before they reach the clinic.</span></div></div>
+        <div class="step"><svg class="ic sm" aria-hidden="true"><use href="#i-box"/></svg><div><b>Controlled updates</b><span>Updates are introduced in a controlled way.</span></div></div>
+        <div class="step"><svg class="ic sm" aria-hidden="true"><use href="#i-history"/></svg><div><b>A way back</b><span>If an issue appears, the previous working version can be restored.</span></div></div>
       </div>
     </div>
     <div class="footer"><div class="flogo"></div><span>Visit Follow-Up Tracker</span><span class="pg"></span></div>
@@ -393,6 +407,28 @@
       <div class="title">Demo</div>
     </div>
     <div class="meta"><div>Then questions</div></div>
+  </section>
+
+  <section class="slide future-slide">
+    <h1>Where we can take this <em>next</em></h1>
+    <p class="future-subtitle">Potential improvements beyond the current MVP.</p>
+    <div class="body">
+      <ul class="future-list" aria-label="Future scope">
+        <li>
+          <svg class="ic" aria-hidden="true"><use href="#i-search"/></svg>
+          <div><h2>Scan and import paper records (OCR)</h2><p>Automatically extract information from scanned visit documents, with staff reviewing the extracted information before saving.</p></div>
+        </li>
+        <li>
+          <svg class="ic" aria-hidden="true"><use href="#i-calendar"/></svg>
+          <div><h2>Smarter reminders and escalations</h2><p>Notify responsible staff when follow-ups approach their deadline or remain overdue.</p></div>
+        </li>
+        <li>
+          <svg class="ic" aria-hidden="true"><use href="#i-db"/></svg>
+          <div><h2>Integration with existing clinic systems</h2><p>Explore connecting with the clinic's existing records or scheduling systems to reduce manual data entry.</p></div>
+        </li>
+      </ul>
+    </div>
+    <div class="footer"><div class="flogo"></div><span>Visit Follow-Up Tracker</span><span class="pg"></span></div>
   </section>
 </div>
 </div>
