@@ -35,14 +35,14 @@ Do this the day before, rehearse once, reset, and do it again 30 minutes before.
 
 | # | Do | Say | Expect |
 |---|---|---|---|
-| 1 | Sign in as `manager@clinic.example.test` | Staff sign in with their clinic email; 1.1.0 adds passwords. | An empty tracker; every count is 0 |
-| 2 | **Import file**, choose `visits_with_bad_rows.json` | The clinic asked for all or nothing. | "was rejected: nothing was saved", 12 problems with reasons; counts still 0 |
-| 3 | **Import file**, choose `clean_visits.json` | The same file without the bad records. | 15 patients, 5 staff, 23 episodes, 40 visits, 79 follow-ups; the counts fill in |
-| 4 | **Follow-ups** tab; move **As of** a week ahead, then back | Flags follow the clinic's windows: lab 3 days, referral and recheck 14. | More follow-ups turn overdue a week ahead |
-| 5 | **Printable report**, then **Print** | What the manager prints. | Follow-ups grouped by flag; the print preview has no buttons |
-| 6 | Sign out; sign in as `birch.sample@clinic.example.test` | A nurse sees only her own follow-ups. | Smaller counts; every row is assigned to her |
-| 7 | On an overdue row, set **Status** to **Closed**, pick "Patient unreachable after three calls", and **Close follow-up**; open the row | Closing needs a reason, and every change is kept. | The history shows the change, her name, the time, and the reason |
-| 8 | **Ask** tab: "How many of my follow-ups are overdue, by action type?"; then click "Mark F001 as done" | Questions read her rows only; they cannot change anything. | The counts add up to her Overdue tile; the second request is refused |
+| 1 | Sign in as `manager@clinic.example.test` | Staff sign in with their clinic email; 1.1.0 adds passwords. | An empty workspace; every count is 0 |
+| 2 | **Import data** in the left menu: choose `visits_with_bad_rows.json`, then **Validate and import** | The clinic asked for all or nothing. | "Import rejected: 12 problems. Nothing was saved.", with each problem listed |
+| 3 | The same with `clean_visits.json` | The same file without the bad records. | "Import complete. All records were saved."; the **Dashboard** fills in |
+| 4 | **Follow-ups**: move **As of** a week ahead, then back | Flags follow the clinic's windows: lab 3 days, referral and recheck 14. | More follow-ups turn overdue a week ahead |
+| 5 | **Reports**, then **Print report**, then **Print** | What the manager prints. | Follow-ups grouped by flag; the print preview has no buttons |
+| 6 | The initials at the top right, then **Sign out**; sign in as `birch.sample@clinic.example.test` | A nurse sees only her own follow-ups. | Smaller counts; every row is assigned to her; no **Import data** in the menu |
+| 7 | Click an overdue row, then **Close follow-up**; enter "Patient unreachable after three calls" and **Save changes**; scroll the panel to **Follow-up history** | Closing needs a reason, and every change is kept. | The history shows Open → Closed, her name, the time, and the reason |
+| 8 | **AI Search**: "How many of my follow-ups are overdue, by action type?"; then ask "Mark F001 as done" | Questions read her rows only; they cannot change anything. | The counts add up to her Overdue number; the second question is refused |
 | 9 | Terminal: `docker compose exec app python scripts/backup_db.py --output /data/backups` | Backups are checked, not just copied. | "integrity_check ok, test restore matched" |
 | 10 | Terminal: `docker compose up -d --force-recreate`; refresh; sign in as the manager; open the closed follow-up | The container is replaced; the data volume stays. | The follow-up is still closed, with its history |
 
