@@ -252,6 +252,7 @@ Thumbs.db
 !/ui/src/lib/**
 
 # Local agent and design context
+/.github/
 /.agents/
 /.codex/
 /.impeccable/
